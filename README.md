@@ -16,7 +16,7 @@
 📖 Overview
 
 RahGozar is a Tunnel manager tool that
-provides a simple , free and easy-to-use user interface for managing hundreds of Tunnels powered by Darvazeban Core built using Pure Python
+provides a simple , free and easy-to-use user interface for managing hundreds of Tunnels powered by RahGozar Core built using Pure Python
 
 🚀 Why use RahGozar?
 
