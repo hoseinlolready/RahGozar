@@ -1,90 +1,94 @@
 #!/usr/bin/env python3
 
-import sqlite3
-import json
-import hashlib
-import secrets
 import sys
-import time
 import os
 import subprocess
+import time
+import signal
 
-the_path = "/opt/Rahgozar/"
-DB_NAME = os.path.join(the_path, "forwarder.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PANEL_SCRIPT = os.path.join(BASE_DIR, "panel.py")
+CORE_SCRIPT = os.path.join(BASE_DIR, "core.py")
 
+p_panel = None
+p_core = None
+running = True
 
-def runner():
-    Panel_runner = subprocess.Popen(["python3", f"{the_path}panel.py"])
-    Core_runner = subprocess.Popen(["python3", f"{the_path}core.py"])
-    try:
-        Panel_runner.wait()
-        Core_runner.wait()
-    except:
-        Panel_runner.kill()
-        Core_runner.kill()
+def log(msg):
+    print(f"[Rahgozar Runner] {msg}", flush=True)
 
-
-def init_db():
-    with get_db() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, salt TEXT)""")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT,
-                listen_port INTEGER UNIQUE,
-                target_ip TEXT,
-                target_port INTEGER,
-                limit_bytes INTEGER,
-                bytes_used INTEGER DEFAULT 0,
-                expiry_date INTEGER,
-                note TEXT,
-                active BOOLEAN DEFAULT 1,
-                created_at INTEGER
-            )
-        """)
-        conn.execute("""CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT, created_at INTEGER)""")
-
-def get_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def hash_password(password):
-    salt = secrets.token_hex(8)
-    hash_obj = hashlib.sha256((password + salt).encode())
-    return hash_obj.hexdigest(), salt
-
-def verify_password(stored_hash, salt, provided_password):
-    hash_obj = hashlib.sha256((provided_password + salt).encode())
-    return hash_obj.hexdigest() == stored_hash
-
-def cli_manager():
-    if len(sys.argv) < 2: return
-    cmd = sys.argv[1]
+def cleanup_processes():
+    global p_panel, p_core
     
-    if cmd == "add" and len(sys.argv) == 4:
-        user, pwd = sys.argv[2], sys.argv[3]
-        ph, salt = hash_password(pwd)
-        try:
-            with get_db() as conn:
-                conn.execute("INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)", (user, ph, salt))
-            print(f"User '{user}' added.")
-        except: print("User exists.")
+    procs = [p for p in [p_panel, p_core] if p is not None]
+    
+    if not procs:
+        return
+
+    log("Stopping services...")
+    
+    for p in procs:
+        if p.poll() is None:
+            p.terminate()
+
+    start_wait = time.time()
+    while time.time() - start_wait < 3:
+        if all(p.poll() is not None for p in procs):
+            break
+        time.sleep(0.1)
+
+    for p in procs:
+        if p.poll() is None:
+            log(f"Process {p.pid} did not exit, forcing kill.")
+            p.kill()
+
+def handle_signal(signum, frame):
+    global running
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    log(f"Received {sig_name}. Shutting down...")
+    running = False
+
+def start_services():
+    global p_panel, p_core, running
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    log(f"Starting services from {BASE_DIR}...")
+
+    try:
+        p_panel = subprocess.Popen(
+            [sys.executable, PANEL_SCRIPT], 
+            stdout=sys.stdout, 
+            stderr=sys.stderr
+        )
+        p_core = subprocess.Popen(
+            [sys.executable, CORE_SCRIPT], 
+            stdout=sys.stdout, 
+            stderr=sys.stderr
+        )
+
+        log(f"Panel PID: {p_panel.pid}, Core PID: {p_core.pid}")
+
+        while running:
+            panel_status = p_panel.poll()
+            core_status = p_core.poll()
+            if panel_status is not None:
+                log(f"CRITICAL: Panel script exited unexpectedly (Code: {panel_status}).")
+                running = False
+            
+            if core_status is not None:
+                log(f"CRITICAL: Core script exited unexpectedly (Code: {core_status}).")
+                running = False
+
+            time.sleep(1)
+
+    except Exception as e:
+        log(f"Runner Error: {e}")
+    finally:
+        cleanup_processes()
+        log("Exited.")
         sys.exit(0)
-        
-    if cmd == "del" and len(sys.argv) == 3:
-        user = sys.argv[2]
-        with get_db() as conn:
-            conn.execute("DELETE FROM users WHERE username = ?", (user,))
-        print(f"User '{user}' deleted (if existed).")
-        sys.exit(0)
-
-    if cmd == "run" and len(sys.argv) == 2:
-        runner()
-
-
-
 
 if __name__ == "__main__":
-    init_db()
-    cli_manager() 
+    start_services()
