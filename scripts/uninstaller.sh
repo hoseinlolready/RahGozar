@@ -10,7 +10,7 @@ sudo systemctl disable Rahgozar.service
 sleep 1
 echo [System] : RahGozar uninstalled successfully
 sleep 2
-Echo [Rahgozar Creator] : Narahat shodam.
+echo [Rahgozar Creator] : Narahat shodam.
 sleep 2
-Echo [Rahgozar Creator] : Bye.
+echo [Rahgozar Creator] : Bye.
 sleep 2
