@@ -6,7 +6,8 @@ import subprocess
 import time
 import signal
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+the_path = "/opt/Rahgozar/"
+BASE_DIR = os.path.dirname(os.path.abspath(the_path))
 PANEL_SCRIPT = os.path.join(BASE_DIR, "panel.py")
 CORE_SCRIPT = os.path.join(BASE_DIR, "core.py")
 
