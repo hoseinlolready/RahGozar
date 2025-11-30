@@ -9,8 +9,8 @@ import subprocess
 import getpass
 import argparse
 from time import sleep
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+dir = "/opt/Rahgozar"
+BASE_DIR = os.path.dirname(dir)
 DB_NAME = os.path.join(BASE_DIR, "forwarder.db")
 SERVICE_NAME = "Rahgozar"
 
