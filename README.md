@@ -3,7 +3,7 @@
 <p>
 <img src="https://img.shields.io/badge/Python-3.10+-blue.svg?style=flat&logo=python" alt="Python 3.10+">
 <img src="https://img.shields.io/github/license/hoseinlolready/RahGozar?style=flat" />
-<img src="https://img.shields.io/badge/Status-Stable-orange.svg" alt="Status">
+<img src="https://img.shields.io/badge/Status-beta-orange.svg" alt="Status">
 <img src="https://img.shields.io/github/stars/hoseinlolready/RahGozar" />
 <a href="https://t.me/HOSEINLOL" target="_blank">
     <img src="https://img.shields.io/badge/telegram-channel-blue&logo=telegram" />
