@@ -708,11 +708,10 @@ class APIHandler(BaseHTTPRequestHandler):
                     token = secrets.token_hex(16)
                     conn.execute("INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)", 
                                 (token, body.get('u'), int(time.time())))
+                    
                     self.send_response(200)
-                    c = cookies.SimpleCookie()
-                    c['token'] = token
-                    c['token']['path'] = '/'
-                    self.send_header('Set-Cookie', c.output(header='').strip())
+                    cookie_header = f"token={token}; Path=/; SameSite=Lax"
+                    self.send_header('Set-Cookie', cookie_header)
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': True}).encode())
                 else:
@@ -727,7 +726,7 @@ class APIHandler(BaseHTTPRequestHandler):
                         conn.execute("DELETE FROM sessions WHERE token = ?", (c['token'].value,))
                         conn.commit()
             self.send_response(200)
-            self.send_header('Set-Cookie', 'token=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0')
+            self.send_header('Set-Cookie', 'token=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax')
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'success': True}).encode())
