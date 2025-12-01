@@ -6,12 +6,16 @@ import secrets
 import sys
 import time
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler , ThreadingHTTPServer
 from http import cookies
 from datetime import datetime
-from requests import get
+import urllib.request
 
-ip = get('https://api.ipify.org').text
+try:
+    with urllib.request.urlopen('https://api.ipify.org', timeout=3) as response:
+        ip = response.read().decode('utf-8')
+except:
+    ip = "127.0.0.1"
 DB_NAME = "forwarder.db"
 PORT = 9090
 
@@ -708,10 +712,10 @@ class APIHandler(BaseHTTPRequestHandler):
                     token = secrets.token_hex(16)
                     conn.execute("INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)", 
                                 (token, body.get('u'), int(time.time())))
-                    
                     self.send_response(200)
-                    cookie_header = f"token={token}; Path=/; SameSite=Lax"
-                    self.send_header('Set-Cookie', cookie_header)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Set-Cookie', f'token={token}; Path=/; Max-Age=2592000; SameSite=Lax')
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': True}).encode())
                 else:
@@ -725,9 +729,10 @@ class APIHandler(BaseHTTPRequestHandler):
                     with get_db() as conn:
                         conn.execute("DELETE FROM sessions WHERE token = ?", (c['token'].value,))
                         conn.commit()
+            
             self.send_response(200)
-            self.send_header('Set-Cookie', 'token=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax')
             self.send_header('Content-type', 'application/json')
+            self.send_header('Set-Cookie', 'token=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax')
             self.end_headers()
             self.wfile.write(json.dumps({'success': True}).encode())
             return
@@ -736,12 +741,13 @@ class APIHandler(BaseHTTPRequestHandler):
 
         if self.path == '/api/rules':
             try:
+                exp = int(time.mktime(time.strptime(body['expiry'], '%Y-%m-%d'))) if body.get('expiry') else 0
                 with get_db() as conn:
                     conn.execute(
                         """INSERT INTO rules (username, listen_port, target_ip, target_port, limit_bytes, active, expiry_date, note, created_at) 
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (body['username'], body['listen_port'], body['target_ip'], body['target_port'], 
-                         body['limit_bytes'], body['active'], body['expiry_date'], body['note'], int(time.time()))
+                         body['limit']*1073741824, body['active'], exp, body['note'], int(time.time()))
                     )
                 self.send_json({'success': True})
             except Exception as e:
@@ -778,9 +784,10 @@ class APIHandler(BaseHTTPRequestHandler):
             self.send_json({'success': True})
 
 if __name__ == "__main__":
+    init_db()
     print(f"RahGozar Panel running on http://Localhost:{PORT}")
     print(f"RahGozar Panel running on http://{ip}:{PORT}")
     try:
-        HTTPServer(('0.0.0.0', PORT), APIHandler).serve_forever()
+        ThreadingHTTPServer(('0.0.0.0', PORT), APIHandler).serve_forever()
     except KeyboardInterrupt:
         pass
