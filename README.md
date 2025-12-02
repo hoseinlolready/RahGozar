@@ -48,6 +48,11 @@ The script :
 Rahgozar
 ```
 
+And if you see a problem or the project isnt useful for you you can just use this command to uninstall it
+
+```bash
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/uninstaller.sh)"
+```
 
 # ❤️ Donation
 
