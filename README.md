@@ -13,6 +13,8 @@
 <p>Manage your tunnels with Data Limits, Expiry Dates, and a beautiful Dark UI.</p>
 </div>
 
+# The readme is not Complete 
+
 📖 Overview
 
 RahGozar is a Tunnel manager tool that
@@ -39,6 +41,9 @@ Run the following command to install RahGozar with SQLite database:
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/installer.sh)"
 ```
 
+# ⌨️ Code information 
+
+...
 
 # ❤️ Donation
 
