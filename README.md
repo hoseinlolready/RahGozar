@@ -13,7 +13,6 @@
 <p>Manage your tunnels with Data Limits, Expiry Dates, and a beautiful Dark UI.</p>
 </div>
 
-# The Project is on Beta
 
 📖 Overview
 
