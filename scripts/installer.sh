@@ -2,6 +2,10 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 ip=$(curl -s https://api.ipify.org)
 
+echo -e "${GREEN}Installing The Packages...${NC}"
+
+apt install curl wget python3 python3-pip -y
+
 echo -e "${GREEN}Installing Rahgozar Panel...${NC}"
 
 mkdir -p /opt/Rahgozar/
