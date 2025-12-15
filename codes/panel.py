@@ -611,10 +611,8 @@ function openEdit(id) {
 }
 
 async function saveEdit() {
-    const limitVal = parseFloat(document.getElementById('e_limit').value);
-    const mult = 1024*1024*1024;
-    const expiryVal = document.getElementById('e_expiry').value; 
-    const expiryTs = expiryVal ? new Date(expiryVal).getTime() / 1000 : 0;
+    // 1. Handle Limit safely (prevent NaN crash)
+    const limitVal = parseInt(document.getElementById('e_limit').value) || 0;
 
     const body = {
         id: parseInt(document.getElementById('e_id').value),
@@ -622,18 +620,22 @@ async function saveEdit() {
         listen_port: parseInt(document.getElementById('e_lport').value),
         target_ip: document.getElementById('e_tip').value,
         target_port: parseInt(document.getElementById('e_tport').value),
-        limit_bytes: limitVal * mult,
+        limit: limitVal, // Send 'limit' (Python handles GB conversion)
         active: document.getElementById('e_active').checked,
-        expiry_date: expiryTs,
+        expiry: document.getElementById('e_expiry').value, // Send date string (Python parses it)
         note: document.getElementById('e_note').value
     };
 
     const res = await api('/api/rules', 'PUT', body);
+    
     if(res && res.success) {
-        bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+        const modalEl = document.getElementById('editModal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if(modal) modal.hide();
         loadData();
     } else {
-        alert('Error updating rule.');
+        // Show actual error from server
+        alert('Error: ' + (res ? res.error : 'Unknown'));
     }
 }
 
@@ -741,15 +743,21 @@ class APIHandler(BaseHTTPRequestHandler):
 
         if self.path == '/api/rules':
             try:
+                limit_val = body.get('limit') or 0
+                limit_bytes = int(limit_val) * 1073741824
+                
                 exp = int(time.mktime(time.strptime(body['expiry'], '%Y-%m-%d'))) if body.get('expiry') else 0
+                
                 with get_db() as conn:
                     conn.execute(
                         """INSERT INTO rules (username, listen_port, target_ip, target_port, limit_bytes, active, expiry_date, note, created_at) 
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (body['username'], body['listen_port'], body['target_ip'], body['target_port'], 
-                         body['limit']*1073741824, body['active'], exp, body['note'], int(time.time()))
+                         limit_bytes, body['active'], exp, body['note'], int(time.time()))
                     )
                 self.send_json({'success': True})
+            except sqlite3.IntegrityError:
+                self.send_json({'error': f"Port {body['listen_port']} is already in use by another rule."}, 409)
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
 
@@ -764,14 +772,21 @@ class APIHandler(BaseHTTPRequestHandler):
         
         if self.path == '/api/rules':
             try:
+                limit_val = body.get('limit') or 0
+                limit_bytes = int(limit_val) * 1073741824
+                
+                exp = int(time.mktime(time.strptime(body['expiry'], '%Y-%m-%d'))) if body.get('expiry') else 0
+                
                 with get_db() as conn:
                     conn.execute(
-                        """UPDATE rules SET username=?, listen_port=?, target_ip=?, target_port=?, limit_bytes=?, active=?, expiry_date=?, note=? 
-                           WHERE id=?""",
+                        """INSERT INTO rules (username, listen_port, target_ip, target_port, limit_bytes, active, expiry_date, note, created_at) 
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (body['username'], body['listen_port'], body['target_ip'], body['target_port'], 
-                         body['limit_bytes'], body['active'], body['expiry_date'], body['note'], body['id'])
+                         limit_bytes, body['active'], exp, body['note'], int(time.time()))
                     )
                 self.send_json({'success': True})
+            except sqlite3.IntegrityError:
+                self.send_json({'error': f"Port {body['listen_port']} is already in use by another rule."}, 409)
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
 
