@@ -37,6 +37,8 @@ def get_db():
 
 def init_db():
     try:
+        if not os.path.exists(BASE_DIR):
+            os.makedirs(BASE_DIR, exist_ok=True)
         with get_db() as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, salt TEXT)""")
             conn.execute("""
@@ -56,7 +58,7 @@ def init_db():
             """)
             conn.execute("""CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT, created_at INTEGER)""")
     except Exception as e:
-        print_msg(f"Database initialization failed: {e}", "err")
+        print_msg(f"Database initialization failed: {e}", "warn")
 
 def hash_password(password):
     salt = secrets.token_hex(8)
@@ -134,6 +136,44 @@ def control_service(action):
     except Exception as e:
         print_msg(f"Error: {e}", "err")
 
+def view_logs():
+    print_msg(f"Opening logs for {SERVICE_NAME}...", "info")
+    print(f"{Color.CYAN}Press CTRL+C to exit log view.{Color.ENDC}")
+    sleep(1.5)
+    try:
+        subprocess.run(["journalctl", "-u", SERVICE_NAME, "-f", "-n", "100"])
+    except KeyboardInterrupt:
+        print(f"\n{Color.GREEN}Log view closed.{Color.ENDC}")
+    except FileNotFoundError:
+        print_msg("journalctl command not found. Is this a systemd system?", "err")
+    except Exception as e:
+        print_msg(f"Error viewing logs: {e}", "err")
+    sleep(1)
+
+def uninstall_service():
+    print(f"\n{Color.FAIL}{Color.BOLD}!!! DANGER ZONE !!!{Color.ENDC}")
+    print(f"You are about to uninstall {SERVICE_NAME}.")
+    print(f"This will execute the external uninstaller script.")
+    print(f"{Color.WARNING}All data and configurations may be lost.{Color.ENDC}")
+    
+    confirm = input(f"Are you sure you want to continue? (type '{Color.BOLD}yes{Color.ENDC}' to confirm): ").strip().lower()
+
+    if confirm == "yes":
+        print_msg("Fetching and running uninstaller...", "warn")
+        try:
+            cmd = 'sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/uninstaller.sh)"'
+            subprocess.run(cmd, shell=True, check=True)
+            print_msg("Uninstallation process finished.", "ok")
+            sys.exit(0)
+        except subprocess.CalledProcessError as e:
+            print_msg(f"Uninstallation command failed: {e}", "err")
+        except Exception as e:
+            print_msg(f"An unexpected error occurred: {e}", "err")
+    else:
+        print_msg("Uninstallation cancelled.", "info")
+    
+    input("Press Enter to return to menu...")
+
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -165,7 +205,9 @@ def interactive_menu():
         print(f"{Color.BOLD}4){Color.ENDC} Add Admin User")
         print(f"{Color.BOLD}5){Color.ENDC} Delete Admin User")
         print(f"{Color.BOLD}6){Color.ENDC} List Users")
-        print(f"{Color.BOLD}7){Color.ENDC} Exit")
+        print(f"{Color.BOLD}7){Color.ENDC} See Service Logs")
+        print(f"{Color.BOLD}8){Color.ENDC} {Color.FAIL}Uninstall Panel{Color.ENDC}")
+        print(f"{Color.BOLD}9){Color.ENDC} Exit")
         print("-" * 50)
         
         choice = input(f"{Color.GREEN}Select option > {Color.ENDC}").strip()
@@ -200,6 +242,12 @@ def interactive_menu():
             input("Press Enter to continue...")
 
         elif choice == "7":
+            view_logs()
+
+        elif choice == "8":
+            uninstall_service()
+
+        elif choice == "9":
             print(f"{Color.CYAN}Goodbye!{Color.ENDC}")
             sys.exit(0)
         else:
@@ -216,6 +264,8 @@ if __name__ == "__main__":
     subparsers.add_parser("stop", help="Stop Rahgozar service")
     subparsers.add_parser("restart", help="Restart Rahgozar service")
     subparsers.add_parser("status", help="Check service status")
+    subparsers.add_parser("logs", help="View service logs")
+    subparsers.add_parser("uninstall", help="Uninstall the Panel")
 
     add_parser = subparsers.add_parser("add", help="Add a new user")
     add_parser.add_argument("username", type=str)
@@ -234,6 +284,10 @@ if __name__ == "__main__":
         control_service("restart")
     elif args.command == "status":
         print(get_service_status())
+    elif args.command == "logs":
+        view_logs()
+    elif args.command == "uninstall":
+        uninstall_service()
     elif args.command == "add":
         add_user(args.username, args.password)
     elif args.command == "del":
