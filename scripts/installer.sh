@@ -4,6 +4,8 @@ ip=$(curl -s https://api.ipify.org)
 
 echo -e "${GREEN}Installing The Packages...${NC}"
 
+apt update
+
 apt install curl wget python3 python3-pip -y
 
 pip3 install aiosqlite requests uvloop -y
