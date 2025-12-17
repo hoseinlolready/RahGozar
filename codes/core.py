@@ -1,237 +1,189 @@
 # Rahgozar
-import socket
-import threading
-import select
-import time
-import sqlite3
+import asyncio
 import logging
+import socket
+import sys
+import time
 from requests import get
+import aiosqlite
 
-ip = get('https://api.ipify.org').text
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    print("[CORE] UVLoop optimization enabled.")
+except ImportError:
+    print("[CORE] UVLoop not found. Using standard asyncio.")
+
 DB_NAME = "forwarder.db"
-POLL_INTERVAL = 2
-IDLE_TIMEOUT = 3600
+POLL_INTERVAL = 3
 SAVE_INTERVAL = 5
+SOCKET_BUF_SIZE = 512 * 1024
 
-logging.basicConfig(level=logging.INFO, format='[RahGozar CORE] %(asctime)s - %(message)s')
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(message)s')
 
-class ForwarderCore:
+try:
+    PUBLIC_IP = get('https://api.ipify.org', timeout=3).text
+except:
+    PUBLIC_IP = "127.0.0.1"
+
+class BridgeProtocol(asyncio.Protocol):
     def __init__(self):
-        self.listeners = {}
-        self.rule_signatures = {}
-        self.active_conns = {}
-        self.conn_lock = threading.Lock()
-        self.running = True
-        
-        self.stats_cache = {}
-        self.stats_lock = threading.Lock()
-        
-        self.saver_thread = threading.Thread(target=self.background_saver)
-        self.saver_thread.daemon = True
-        self.saver_thread.start()
+        self.peer: asyncio.Protocol = None
+        self.transport = None
+        self.buffer = []
+        self.paused = False
 
-    def get_db_rules(self):
+    def connection_made(self, transport):
+        self.transport = transport
+        sock = transport.get_extra_info('socket')
         try:
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.execute("SELECT id, username, listen_port, target_ip, target_port, limit_bytes, bytes_used, active, expiry_date FROM rules")
-                return {row['id']: dict(row) for row in cur.fetchall()}
-        except Exception as e:
-            logging.error(f"DB Read Error: {e}")
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUF_SIZE)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUF_SIZE)
+        except:
+            pass
+
+    def data_received(self, data):
+        if self.peer and self.peer.transport:
+            self.peer.transport.write(data)
+            TrafficController.add_usage(len(data))
+        else:
+            self.buffer.append(data)
+
+    def connection_lost(self, exc):
+        if self.peer and self.peer.transport:
+            self.peer.transport.close()
+
+class TargetProtocol(BridgeProtocol):
+    def __init__(self, client_protocol, on_connect_event):
+        super().__init__()
+        self.peer = client_protocol
+        self.on_connect_event = on_connect_event
+
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self.peer.peer = self
+        
+        if self.peer.buffer:
+            for chunk in self.peer.buffer:
+                self.transport.write(chunk)
+            self.peer.buffer = []
+        
+        self.on_connect_event.set()
+
+class ClientProtocol(BridgeProtocol):
+    def __init__(self, target_ip, target_port, loop):
+        super().__init__()
+        self.target_ip = target_ip
+        self.target_port = target_port
+        self.loop = loop
+        self.connected_event = asyncio.Event()
+
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        task = self.loop.create_task(self.connect_to_target())
+
+    async def connect_to_target(self):
+        try:
+            await self.loop.create_connection(
+                lambda: TargetProtocol(self, self.connected_event),
+                self.target_ip, 
+                self.target_port
+            )
+        except Exception:
+            self.transport.close()
+
+class TrafficController:
+    pending_bytes = 0
+    
+    @classmethod
+    def add_usage(cls, amount):
+        cls.pending_bytes += amount
+
+    @classmethod
+    def flush(cls):
+        val = cls.pending_bytes
+        cls.pending_bytes = 0
+        return val
+
+class Core:
+    def __init__(self):
+        self.servers = {}
+        self.loop = asyncio.get_event_loop()
+        self.active_config = {}
+
+    async def get_rules(self):
+        try:
+            async with aiosqlite.connect(DB_NAME) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT * FROM rules WHERE active=1") as cur:
+                    rows = await cur.fetchall()
+                    return {r['id']: dict(r) for r in rows}
+        except:
             return {}
 
-    def background_saver(self):
-        while self.running:
-            time.sleep(SAVE_INTERVAL)
-            to_update = {}
-            with self.stats_lock:
-                if self.stats_cache:
-                    to_update = self.stats_cache.copy()
-                    self.stats_cache.clear()
-            
-            if to_update:
+    async def stats_saver(self):
+        while True:
+            await asyncio.sleep(SAVE_INTERVAL)
+            usage = TrafficController.flush()
+            if usage > 0:
                 try:
-                    with sqlite3.connect(DB_NAME) as conn:
-                        for r_id, bytes_val in to_update.items():
-                            conn.execute("UPDATE rules SET bytes_used = bytes_used + ? WHERE id = ?", (bytes_val, r_id))
-                        conn.commit()
-                except Exception as e:
-                    logging.error(f"DB Save Error: {e}")
-
-    def cache_usage(self, rule_id, bytes_count):
-        with self.stats_lock:
-            self.stats_cache[rule_id] = self.stats_cache.get(rule_id, 0) + bytes_count
-
-    def register_conn(self, rule_id, s1, s2):
-        with self.conn_lock:
-            if rule_id not in self.active_conns:
-                self.active_conns[rule_id] = []
-            self.active_conns[rule_id].append((s1, s2))
-
-    def unregister_conn(self, rule_id, s1, s2):
-        with self.conn_lock:
-            if rule_id in self.active_conns:
-                try:
-                    self.active_conns[rule_id].remove((s1, s2))
-                except ValueError:
-                    pass 
-
-    def kill_all_connections(self, rule_id):
-        with self.conn_lock:
-            if rule_id in self.active_conns:
-                count = len(self.active_conns[rule_id])
-                for s1, s2 in self.active_conns[rule_id]:
-                    try: s1.close()
-                    except: pass
-                    try: s2.close()
-                    except: pass
-                self.active_conns[rule_id] = [] 
-                logging.info(f"Killed {count} connections for Rule {rule_id}")
-    def configure_socket(self, s):
-        try:
-            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        except: pass
-
-    def bridge(self, client, rule):
-        r_id = rule['id']
-        target = None
-        try:
-            self.configure_socket(client)
-            target = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.configure_socket(target)
-            target.settimeout(10)
-            target.connect((rule['target_ip'], rule['target_port']))
-        except Exception:
-            if client: client.close()
-            if target: target.close()
-            return
-
-        self.register_conn(r_id, client, target)
-
-        sockets = [client, target]
-        last_activity = time.time()
-        
-        try:
-            while self.running:
-                readable, _, _ = select.select(sockets, [], [], 1.0)
-                if readable:
-                    for s in readable:
-                        data = s.recv(131072)
-                        if not data:
-                            raise Exception("Closed")
-                        
-                        last_activity = time.time()
-                        self.cache_usage(r_id, len(data))
-
-                        if s is client: target.sendall(data)
-                        else: client.sendall(data)
-                else:
-                    if r_id not in self.listeners: 
-                        raise Exception("Rule Deleted")
-                    if time.time() - last_activity > IDLE_TIMEOUT:
-                        raise Exception("Timeout")
-        except Exception:
-            pass
-        finally:
-            try: client.close()
-            except: pass
-            try: target.close()
-            except: pass
-            self.unregister_conn(r_id, client, target)
-
-    def start_listener(self, rule):
-        r_id = rule['id']
-        srv = None
-        try:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind(('0.0.0.0', rule['listen_port']))
-            srv.listen(100)
-            
-            self.listeners[r_id] = srv
-            self.rule_signatures[r_id] = (rule['listen_port'], rule['target_ip'], rule['target_port'])
-            
-            logging.info(f"Started {ip}:{rule['listen_port']} -> {rule['target_ip']}:{rule['target_port']}")
-
-            while self.running and r_id in self.listeners:
-                try:
-                    srv.settimeout(1.0)
-                    try:
-                        client, _ = srv.accept()
-                    except socket.timeout:
-                        continue
-                    except Exception:
-                        break
-
-                    t = threading.Thread(target=self.bridge, args=(client, rule))
-                    t.daemon = True
-                    t.start()
-                except Exception:
-                    break
-        except Exception as e:
-            logging.error(f"Bind error {rule['listen_port']}: {e}")
-        finally:
-            if srv: 
-                try: srv.close()
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("UPDATE rules SET bytes_used = bytes_used + ? WHERE active=1", (usage // len(self.servers) if self.servers else 0,))
+                        await db.commit()
                 except: pass
-            if r_id in self.listeners and self.listeners[r_id] == srv:
-                self.listeners.pop(r_id, None)
-            self.rule_signatures.pop(r_id, None)
 
-    def loop(self):
-        logging.info(f"RahGozar Core Started.")
-        while self.running:
-            rules = self.get_db_rules()
-            
-            for r_id, r in rules.items():
-                expiry = r['expiry_date'] if r['expiry_date'] is not None else 0
-                is_expired = (expiry > 0 and time.time() > expiry)
-                is_valid = (r['active'] and r['bytes_used'] < r['limit_bytes'] and not is_expired)
+    def start_server_protocol(self, r_id, port, t_ip, t_port):
+        def client_factory():
+            return ClientProtocol(t_ip, t_port, self.loop)
 
-                if is_valid:
-                    current_sig = (r['listen_port'], r['target_ip'], r['target_port'])
-                    
-                    if r_id in self.listeners:
-                        if self.rule_signatures.get(r_id) != current_sig:
-                            logging.info(f"Config changed for Rule {r_id}. Restarting...")
-                            self.stop_rule(r_id)
-                            
-                    if r_id not in self.listeners:
-                        t = threading.Thread(target=self.start_listener, args=(r,))
-                        t.daemon = True
-                        t.start()
+        coro = self.loop.create_server(
+            client_factory, 
+            '0.0.0.0', 
+            port, 
+            reuse_port=True,
+            backlog=4096
+        )
+        server = self.loop.run_until_complete(coro)
+        self.servers[r_id] = server
+        self.active_config[r_id] = (port, t_ip, t_port)
+        print(f"[+] Started {port} -> {t_ip}:{t_port}")
+
+    def stop_server(self, r_id):
+        if r_id in self.servers:
+            self.servers[r_id].close()
+            del self.servers[r_id]
+            del self.active_config[r_id]
+
+    async def monitor(self):
+        print(f"[CORE] Running on {PUBLIC_IP}")
+        while True:
+            rules = await self.get_rules()
             
-            active_ids = list(self.listeners.keys())
-            for r_id in active_ids:
-                r = rules.get(r_id)
-                should_stop = False
+            for rid, r in rules.items():
+                cfg = (r['listen_port'], r['target_ip'], r['target_port'])
                 
-                if not r: should_stop = True
+                valid = True
+                if r['limit_bytes'] and r['bytes_used'] >= r['limit_bytes']: valid = False
+                if r['expiry_date'] and time.time() > r['expiry_date']: valid = False
+
+                if valid:
+                    if rid not in self.servers:
+                        self.start_server_protocol(rid, *cfg)
+                    elif self.active_config[rid] != cfg:
+                        self.stop_server(rid)
+                        self.start_server_protocol(rid, *cfg)
                 else:
-                    expiry = r['expiry_date'] if r['expiry_date'] is not None else 0
-                    if not r['active']: should_stop = True
-                    elif r['bytes_used'] >= r['limit_bytes']: should_stop = True
-                    elif expiry > 0 and time.time() > expiry: should_stop = True
+                    if rid in self.servers: self.stop_server(rid)
 
-                if should_stop:
-                    self.stop_rule(r_id)
-                    logging.info(f"Stopped Rule {r_id}")
+            active_ids = list(self.servers.keys())
+            for rid in active_ids:
+                if rid not in rules:
+                    self.stop_server(rid)
 
-            time.sleep(POLL_INTERVAL)
-
-    def stop_rule(self, r_id):
-        sock = self.listeners.pop(r_id, None)
-        self.rule_signatures.pop(r_id, None)
-        if sock:
-            try: sock.close()
-            except: pass
-        self.kill_all_connections(r_id)
+            await asyncio.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
-    core = ForwarderCore()
-    try:
-        core.loop()
-    except KeyboardInterrupt:
-        core.running = False
-        print("Stopping...")
+    core = Core()
+    core.loop.create_task(core.stats_saver())
+    core.loop.run_until_complete(core.monitor())
