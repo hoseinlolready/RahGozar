@@ -8,7 +8,7 @@ apt update
 
 apt install curl wget python3 python3-pip -y
 
-pip3 install aiosqlite requests uvloop -y
+pip3 install aiosqlite requests uvloop --break-system-packages
 
 echo -e "${GREEN}Installing Rahgozar Panel...${NC}"
 
