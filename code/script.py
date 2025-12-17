@@ -70,6 +70,7 @@ def add_user(username, password):
     try:
         with get_db() as conn:
             conn.execute("INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)", (username, ph, salt))
+        control_service("restart")
         print_msg(f"User '{username}' added successfully.", "ok")
     except sqlite3.IntegrityError:
         print_msg(f"User '{username}' already exists.", "err")
