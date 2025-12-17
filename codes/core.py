@@ -1,4 +1,4 @@
-# Rahgozar
+# Rahgozar Core
 import asyncio
 import logging
 import socket
@@ -7,52 +7,77 @@ import time
 from requests import get
 import aiosqlite
 
+HAS_UVLOOP = False
 try:
     import uvloop
+    
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    print("[CORE] UVLoop optimization enabled.")
+    HAS_UVLOOP = True
 except ImportError:
-    print("[CORE] UVLoop not found. Using standard asyncio.")
+    pass
 
 DB_NAME = "forwarder.db"
 POLL_INTERVAL = 3
 SAVE_INTERVAL = 5
 SOCKET_BUF_SIZE = 512 * 1024
 
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='[CORE] %(asctime)s - %(message)s', datefmt='%H:%M:%S')
 
 try:
     PUBLIC_IP = get('https://api.ipify.org', timeout=3).text
 except:
     PUBLIC_IP = "127.0.0.1"
 
+class TrafficController:
+    pending_bytes = 0
+    
+    @classmethod
+    def add_usage(cls, amount):
+        cls.pending_bytes += amount
+
+    @classmethod
+    def flush(cls):
+        val = cls.pending_bytes
+        cls.pending_bytes = 0
+        return val
 class BridgeProtocol(asyncio.Protocol):
     def __init__(self):
-        self.peer: asyncio.Protocol = None
+        self.peer = None
         self.transport = None
         self.buffer = []
-        self.paused = False
 
     def connection_made(self, transport):
         self.transport = transport
         sock = transport.get_extra_info('socket')
-        try:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUF_SIZE)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUF_SIZE)
-        except:
-            pass
+        if sock:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUF_SIZE)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUF_SIZE)
+            except:
+                pass
 
     def data_received(self, data):
         if self.peer and self.peer.transport:
-            self.peer.transport.write(data)
-            TrafficController.add_usage(len(data))
+            try:
+                self.peer.transport.write(data)
+                TrafficController.add_usage(len(data))
+            except:
+                self.close()
         else:
             self.buffer.append(data)
 
     def connection_lost(self, exc):
-        if self.peer and self.peer.transport:
-            self.peer.transport.close()
+        self.close()
+
+    def close(self):
+        try:
+            if self.transport: self.transport.close()
+        except: pass
+        try:
+            if self.peer and self.peer.transport: 
+                self.peer.transport.close()
+        except: pass
 
 class TargetProtocol(BridgeProtocol):
     def __init__(self, client_protocol, on_connect_event):
@@ -72,16 +97,16 @@ class TargetProtocol(BridgeProtocol):
         self.on_connect_event.set()
 
 class ClientProtocol(BridgeProtocol):
-    def __init__(self, target_ip, target_port, loop):
+    def __init__(self, target_ip, target_port):
         super().__init__()
         self.target_ip = target_ip
         self.target_port = target_port
-        self.loop = loop
+        self.loop = asyncio.get_running_loop()
         self.connected_event = asyncio.Event()
 
     def connection_made(self, transport):
         super().connection_made(transport)
-        task = self.loop.create_task(self.connect_to_target())
+        self.loop.create_task(self.connect_to_target())
 
     async def connect_to_target(self):
         try:
@@ -91,25 +116,11 @@ class ClientProtocol(BridgeProtocol):
                 self.target_port
             )
         except Exception:
-            self.transport.close()
-
-class TrafficController:
-    pending_bytes = 0
-    
-    @classmethod
-    def add_usage(cls, amount):
-        cls.pending_bytes += amount
-
-    @classmethod
-    def flush(cls):
-        val = cls.pending_bytes
-        cls.pending_bytes = 0
-        return val
+            self.close()
 
 class Core:
     def __init__(self):
         self.servers = {}
-        self.loop = asyncio.get_event_loop()
         self.active_config = {}
 
     async def get_rules(self):
@@ -119,44 +130,54 @@ class Core:
                 async with db.execute("SELECT * FROM rules WHERE active=1") as cur:
                     rows = await cur.fetchall()
                     return {r['id']: dict(r) for r in rows}
-        except:
+        except Exception as e:
+            logging.error(f"DB Error: {e}")
             return {}
 
-    async def stats_saver(self):
+    async def save_stats_loop(self):
         while True:
             await asyncio.sleep(SAVE_INTERVAL)
             usage = TrafficController.flush()
-            if usage > 0:
-                try:
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("UPDATE rules SET bytes_used = bytes_used + ? WHERE active=1", (usage // len(self.servers) if self.servers else 0,))
-                        await db.commit()
-                except: pass
+            if usage > 0 and self.servers:
+                try: 
+                    avg_usage = usage // len(self.servers)
+                    if avg_usage > 0:
+                        async with aiosqlite.connect(DB_NAME) as db:
+                            await db.execute("UPDATE rules SET bytes_used = bytes_used + ? WHERE active=1 AND id IN (SELECT id FROM rules WHERE active=1)", (avg_usage,))
+                            await db.commit()
+                except Exception as e:
+                    logging.error(f"Save Stats Error: {e}")
 
-    def start_server_protocol(self, r_id, port, t_ip, t_port):
-        def client_factory():
-            return ClientProtocol(t_ip, t_port, self.loop)
-
-        coro = self.loop.create_server(
-            client_factory, 
-            '0.0.0.0', 
-            port, 
-            reuse_port=True,
-            backlog=4096
-        )
-        server = self.loop.run_until_complete(coro)
-        self.servers[r_id] = server
-        self.active_config[r_id] = (port, t_ip, t_port)
-        print(f"[+] Started {port} -> {t_ip}:{t_port}")
+    async def start_server_protocol(self, r_id, port, t_ip, t_port):
+        loop = asyncio.get_running_loop()
+        
+        try:
+            server = await loop.create_server(
+                lambda: ClientProtocol(t_ip, t_port),
+                '0.0.0.0', 
+                port, 
+                reuse_port=True,
+                backlog=4096
+            )
+            self.servers[r_id] = server
+            self.active_config[r_id] = (port, t_ip, t_port)
+            logging.info(f"Started Rule {r_id}: {port} -> {t_ip}:{t_port}")
+        except OSError as e:
+            logging.error(f"Port {port} failed: {e}")
 
     def stop_server(self, r_id):
         if r_id in self.servers:
-            self.servers[r_id].close()
+            srv = self.servers[r_id]
+            srv.close()
             del self.servers[r_id]
             del self.active_config[r_id]
+            logging.info(f"Stopped Rule {r_id}")
 
-    async def monitor(self):
-        print(f"[CORE] Running on {PUBLIC_IP}")
+    async def run(self):
+        logging.info(f"RahGozar Async Core Running. UVLoop: {HAS_UVLOOP}, IP: {PUBLIC_IP}")
+        
+        asyncio.create_task(self.save_stats_loop())
+
         while True:
             rules = await self.get_rules()
             
@@ -169,10 +190,10 @@ class Core:
 
                 if valid:
                     if rid not in self.servers:
-                        self.start_server_protocol(rid, *cfg)
-                    elif self.active_config[rid] != cfg:
+                        await self.start_server_protocol(rid, *cfg)
+                    elif self.active_config.get(rid) != cfg:
                         self.stop_server(rid)
-                        self.start_server_protocol(rid, *cfg)
+                        await self.start_server_protocol(rid, *cfg)
                 else:
                     if rid in self.servers: self.stop_server(rid)
 
@@ -185,5 +206,7 @@ class Core:
 
 if __name__ == "__main__":
     core = Core()
-    core.loop.create_task(core.stats_saver())
-    core.loop.run_until_complete(core.monitor())
+    try:
+        asyncio.run(core.run())
+    except KeyboardInterrupt:
+        pass
