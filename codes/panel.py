@@ -611,21 +611,21 @@ function openEdit(id) {
 }
 
 async function saveEdit() {
-    // 1. Handle Limit safely (prevent NaN crash)
-    const limitVal = parseInt(document.getElementById('e_limit').value) || 0;
+    const limitInput = document.getElementById('e_limit').value;
+    const limitVal = limitInput ? parseInt(limitInput) : 0;
 
     const body = {
         id: parseInt(document.getElementById('e_id').value),
         username: document.getElementById('e_username').value,
         listen_port: parseInt(document.getElementById('e_lport').value),
+        limit: limitVal,
         target_ip: document.getElementById('e_tip').value,
         target_port: parseInt(document.getElementById('e_tport').value),
-        limit: limitVal, // Send 'limit' (Python handles GB conversion)
         active: document.getElementById('e_active').checked,
-        expiry: document.getElementById('e_expiry').value, // Send date string (Python parses it)
+        expiry: document.getElementById('e_expiry').value,
         note: document.getElementById('e_note').value
     };
-
+    
     const res = await api('/api/rules', 'PUT', body);
     
     if(res && res.success) {
@@ -634,8 +634,7 @@ async function saveEdit() {
         if(modal) modal.hide();
         loadData();
     } else {
-        // Show actual error from server
-        alert('Error: ' + (res ? res.error : 'Unknown'));
+        alert('Error: ' + (res ? res.error : 'Unknown Error'));
     }
 }
 
@@ -772,21 +771,23 @@ class APIHandler(BaseHTTPRequestHandler):
         
         if self.path == '/api/rules':
             try:
-                limit_val = body.get('limit') or 0
-                limit_bytes = int(limit_val) * 1073741824
-                
-                exp = int(time.mktime(time.strptime(body['expiry'], '%Y-%m-%d'))) if body.get('expiry') else 0
-                
                 with get_db() as conn:
+                    conflict = conn.execute("SELECT id FROM rules WHERE listen_port = ? AND id != ?", 
+                                          (body['listen_port'], body['id'])).fetchone()
+                    if conflict:
+                        self.send_json({'error': f"Port {body['listen_port']} is already used by another rule."}, 409)
+                        return
+                    limit_val = body.get('limit') or 0
+                    limit_bytes = int(limit_val) * 1073741824
+                    exp = int(time.mktime(time.strptime(body['expiry'], '%Y-%m-%d'))) if body.get('expiry') else 0
+                    
                     conn.execute(
-                        """INSERT INTO rules (username, listen_port, target_ip, target_port, limit_bytes, active, expiry_date, note, created_at) 
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        """UPDATE rules SET username=?, listen_port=?, target_ip=?, target_port=?, limit_bytes=?, active=?, expiry_date=?, note=? 
+                           WHERE id=?""",
                         (body['username'], body['listen_port'], body['target_ip'], body['target_port'], 
-                         limit_bytes, body['active'], exp, body['note'], int(time.time()))
+                         limit_bytes, body['active'], exp, body['note'], body['id'])
                     )
                 self.send_json({'success': True})
-            except sqlite3.IntegrityError:
-                self.send_json({'error': f"Port {body['listen_port']} is already in use by another rule."}, 409)
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
 
