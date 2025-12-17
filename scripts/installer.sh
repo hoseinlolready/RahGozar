@@ -6,7 +6,7 @@ echo -e "${GREEN}Installing The Packages...${NC}"
 
 apt install curl wget python3 python3-pip -y
 
-pip3 install aiosqlite requests uvloop
+pip3 install aiosqlite requests uvloop -y
 
 echo -e "${GREEN}Installing Rahgozar Panel...${NC}"
 
