@@ -8,7 +8,7 @@ import signal
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PANEL_SCRIPT = os.path.join(BASE_DIR, "panel.py")
-CORE_SCRIPT = os.path.join(BASE_DIR, "core.py")
+CORE_SCRIPT = os.path.join(BASE_DIR, "Rahgozar_Core_AMD64")
 
 p_panel = None
 p_core = None
