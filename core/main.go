@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -71,7 +70,7 @@ func (st *StatsTracker) Reset(ruleID int) uint64 {
 
 type ServerManager struct {
 	listeners map[int]net.Listener
-	configs   map[int]string 
+	configs   map[int]string
 	tracker   *StatsTracker
 	db        *sql.DB
 	mu        sync.Mutex
@@ -90,7 +89,6 @@ func main() {
 	}
 	defer db.Close()
 
-	// 4. Initialize Manager
 	tracker := &StatsTracker{counts: make(map[int]*uint64)}
 	manager := &ServerManager{
 		listeners: make(map[int]net.Listener),
@@ -100,7 +98,7 @@ func main() {
 	}
 
 	go runStatsSaver(db, tracker)
-	
+
 	ticker := time.NewTicker(PollInterval)
 	for range ticker.C {
 		if err := manager.SyncRules(); err != nil {
@@ -108,7 +106,6 @@ func main() {
 		}
 	}
 }
-
 
 func (m *ServerManager) SyncRules() error {
 	rows, err := m.db.Query("SELECT id, listen_port, target_ip, target_port, limit_bytes, bytes_used, expiry_date FROM rules WHERE active=1")
@@ -183,7 +180,7 @@ func (m *ServerManager) StartServer(r Rule, hash string) {
 		if err != nil {
 			return
 		}
-		
+
 		go handleConnection(conn, r.TargetIP, r.TargetPort, counter)
 	}
 }
@@ -209,7 +206,6 @@ func handleConnection(src net.Conn, targetIP string, targetPort int, counter *ui
 
 	if tcpConn, ok := src.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
-		tcpConn.SetKeepAlive(true)
 	}
 
 	dest, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetIP, targetPort), 5*time.Second)
@@ -222,7 +218,6 @@ func handleConnection(src net.Conn, targetIP string, targetPort int, counter *ui
 		tcpConn.SetNoDelay(true)
 	}
 
-	
 	errChan := make(chan error, 2)
 
 	go func() {
@@ -245,11 +240,11 @@ func pipe(src, dst net.Conn, counter *uint64) error {
 		nr, er := src.Read(buf)
 		if nr > 0 {
 			nw, ew := dst.Write(buf[0:nr])
-			
+
 			if nw > 0 {
 				atomic.AddUint64(counter, uint64(nw))
 			}
-			
+
 			if ew != nil {
 				return ew
 			}
@@ -263,8 +258,11 @@ func pipe(src, dst net.Conn, counter *uint64) error {
 	}
 }
 
+
 func runStatsSaver(db *sql.DB, tracker *StatsTracker) {
 	ticker := time.NewTicker(SaveInterval)
+	defer ticker.Stop()
+
 	for range ticker.C {
 		tracker.mu.RLock()
 		ids := make([]int, 0, len(tracker.counts))
@@ -279,15 +277,17 @@ func runStatsSaver(db *sql.DB, tracker *StatsTracker) {
 
 		tx, err := db.Begin()
 		if err != nil {
-			log.Printf("DB Tx Error: %v", err)
+			log.Printf("DB Tx Begin Error: %v", err)
 			continue
 		}
 
 		stmt, err := tx.Prepare("UPDATE rules SET bytes_used = bytes_used + ? WHERE id = ?")
 		if err != nil {
 			tx.Rollback()
+			log.Printf("DB Prepare Error: %v", err)
 			continue
 		}
+		defer stmt.Close()
 
 		updatesCount := 0
 		for _, id := range ids {
@@ -302,7 +302,6 @@ func runStatsSaver(db *sql.DB, tracker *StatsTracker) {
 			}
 		}
 
-		stmt.Close()
 		if updatesCount > 0 {
 			if err := tx.Commit(); err != nil {
 				log.Printf("DB Commit Error: %v", err)
@@ -313,14 +312,21 @@ func runStatsSaver(db *sql.DB, tracker *StatsTracker) {
 	}
 }
 
+// go khayli sar dard dareeee ): HOSEINLOL.
 
 func getPublicIP() string {
 	client := http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get("https://api.ipify.org")
 	if err != nil {
+		log.Printf("Failed to get public IP: %v", err)
 		return "127.0.0.1"
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read public IP response: %v", err)
+		return "127.0.0.1"
+	}
 	return string(body)
 }
