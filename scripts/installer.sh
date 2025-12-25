@@ -8,7 +8,7 @@ apt update
 
 apt install curl wget python3 python3-pip -y
 
-pip3 install aiosqlite requests uvloop --break-system-packages
+pip3 install requests --break-system-packages
 
 echo -e "${GREEN}Installing Rahgozar Panel...${NC}"
 
@@ -17,7 +17,7 @@ mkdir -p /opt/Rahgozar/
 echo -e "${GREEN}Downloading the Rahgozar Files...${NC}"
 
 wget -P /opt/Rahgozar/ https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/codes/panel.py
-wget -P /opt/Rahgozar/ https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/codes/core.py
+wget -P /opt/Rahgozar/ https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/core/binary/Rahgozar_Core_AMD64
 wget -P /opt/Rahgozar/ https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/codes/main.py
 wget -P /opt/Rahgozar/ https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/code/script.py
 
