@@ -5,10 +5,11 @@ import os
 import subprocess
 import time
 import signal
+import stat
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PANEL_SCRIPT = os.path.join(BASE_DIR, "panel.py")
-CORE_SCRIPT = os.path.join(BASE_DIR, "Rahgozar_Core_AMD64")
+CORE_BINARY = os.path.join(BASE_DIR, "Rahgozar_Core_AMD64")
 
 p_panel = None
 p_core = None
@@ -16,6 +17,14 @@ running = True
 
 def log(msg):
     print(f"[Rahgozar Runner] {msg}", flush=True)
+
+def make_executable(path):
+    if os.path.exists(path):
+        st = os.stat(path)
+        os.chmod(path, st.st_mode | stat.S_IEXEC)
+    else:
+        log(f"ERROR: Binary not found at {path}")
+        sys.exit(1)
 
 def cleanup_processes():
     global p_panel, p_core
@@ -56,14 +65,17 @@ def start_services():
 
     log(f"Starting services from {BASE_DIR}...")
 
+    make_executable(CORE_BINARY)
+
     try:
         p_panel = subprocess.Popen(
             [sys.executable, PANEL_SCRIPT], 
             stdout=sys.stdout, 
             stderr=sys.stderr
         )
+
         p_core = subprocess.Popen(
-            [sys.executable, CORE_SCRIPT], 
+            [CORE_BINARY], 
             stdout=sys.stdout, 
             stderr=sys.stderr
         )
@@ -73,16 +85,21 @@ def start_services():
         while running:
             panel_status = p_panel.poll()
             core_status = p_core.poll()
+            
             if panel_status is not None:
                 log(f"CRITICAL: Panel script exited unexpectedly (Code: {panel_status}).")
                 running = False
             
             if core_status is not None:
-                log(f"CRITICAL: Core script exited unexpectedly (Code: {core_status}).")
+                log(f"CRITICAL: Core binary exited unexpectedly (Code: {core_status}).")
                 running = False
 
             time.sleep(1)
 
+    except FileNotFoundError as fnf:
+        log(f"Runner Error: file not found - {fnf}")
+    except OSError as ose:
+        log(f"Runner Error: OS Error (check permissions or format) - {ose}")
     except Exception as e:
         log(f"Runner Error: {e}")
     finally:
