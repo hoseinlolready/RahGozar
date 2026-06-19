@@ -66,7 +66,6 @@ func (m *Manager) getCounter(id int64) *counter {
 	return c
 }
 
-// Run starts the background loops. Blocks forever.
 func (m *Manager) Run() {
 	go m.statsLoop()
 	go m.periodicResetLoop()
@@ -80,9 +79,8 @@ func (m *Manager) Run() {
 	}
 }
 
-// sync reconciles running listeners against the DB rule set.
 func (m *Manager) sync() error {
-	rows, err := m.db.Query(`SELECT id, owner, name, listen_port, target_ip, target_port,
+	rows, err := m.db.Query(`SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port,
 		limit_bytes, bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
 		FROM rules WHERE active = 1`)
 	if err != nil {
@@ -96,7 +94,8 @@ func (m *Manager) sync() error {
 	for rows.Next() {
 		var r Rule
 		var active int
-		if err := rows.Scan(&r.ID, &r.Owner, &r.Name, &r.ListenPort, &r.TargetIP, &r.TargetPort,
+		if err := rows.Scan(&r.ID, &r.Owner, &r.Name, &r.Role, &r.Mode, &r.Secret, &r.Host,
+			&r.ListenPort, &r.TargetIP, &r.TargetPort,
 			&r.LimitBytes, &r.BytesUp, &r.BytesDown, &r.Period, &r.PeriodResetAt, &r.ExpiryDate,
 			&r.Note, &active, &r.CreatedAt); err != nil {
 			log.Printf("row scan: %v", err)
@@ -113,7 +112,7 @@ func (m *Manager) sync() error {
 	}
 
 	for id, r := range wanted {
-		hash := fmt.Sprintf("%d:%s:%d", r.ListenPort, r.TargetIP, r.TargetPort)
+		hash := fmt.Sprintf("%s|%s|%s|%s|%d:%s:%d", r.Role, r.Mode, r.Secret, r.Host, r.ListenPort, r.TargetIP, r.TargetPort)
 
 		m.mu.Lock()
 		cur, exists := m.configs[id]
@@ -139,9 +138,31 @@ func (m *Manager) sync() error {
 }
 
 func (m *Manager) start(r Rule, hash string) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", r.ListenPort))
+	opt := TransportOpt{Secret: r.Secret, Host: r.Host}
+	listenAddr := fmt.Sprintf(":%d", r.ListenPort)
+	targetAddr := fmt.Sprintf("%s:%d", r.TargetIP, r.TargetPort)
+
+	var ln net.Listener
+	var err error
+
+	switch r.Role {
+	case "server":
+		t, terr := getTransport(r.Mode)
+		if terr != nil {
+			log.Printf("tunnel #%d: %v", r.ID, terr)
+			return
+		}
+		ln, err = t.Listen(listenAddr, opt)
+
+	case "client":
+		ln, err = net.Listen("tcp", listenAddr)
+
+	default:
+		ln, err = net.Listen("tcp", listenAddr)
+	}
+
 	if err != nil {
-		log.Printf("listen :%d failed: %v", r.ListenPort, err)
+		log.Printf("listen :%d failed (role=%s mode=%s): %v", r.ListenPort, r.Role, r.Mode, err)
 		return
 	}
 
@@ -150,15 +171,32 @@ func (m *Manager) start(r Rule, hash string) {
 	m.configs[r.ID] = hash
 	m.mu.Unlock()
 
-	log.Printf("tunnel #%d up: :%d -> %s:%d (owner=%s)", r.ID, r.ListenPort, r.TargetIP, r.TargetPort, r.Owner)
+	modeLabel := r.Mode
+	if r.Role == "client" || r.Role == "server" {
+		log.Printf("tunnel #%d up [%s/%s]: :%d <-> %s (owner=%s)", r.ID, r.Role, modeLabel, r.ListenPort, targetAddr, r.Owner)
+	} else {
+		log.Printf("tunnel #%d up [forward]: :%d -> %s (owner=%s)", r.ID, r.ListenPort, targetAddr, r.Owner)
+	}
 
 	c := m.getCounter(r.ID)
+
+	dialOut := func() (net.Conn, error) { return dialTimeout(targetAddr) }
+	if r.Role == "client" {
+		t, terr := getTransport(r.Mode)
+		if terr != nil {
+			log.Printf("tunnel #%d: %v", r.ID, terr)
+			ln.Close()
+			return
+		}
+		dialOut = func() (net.Conn, error) { return t.Dial(targetAddr, opt) }
+	}
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return // listener closed
 		}
-		go handleConn(conn, r.TargetIP, r.TargetPort, c)
+		go handleConn(conn, dialOut, c)
 	}
 }
 
@@ -177,13 +215,13 @@ func (m *Manager) stopLocked(id int64) {
 	}
 }
 
-func handleConn(src net.Conn, targetIP string, targetPort int, c *counter) {
+func handleConn(src net.Conn, dialOut func() (net.Conn, error), c *counter) {
 	defer src.Close()
 	if t, ok := src.(*net.TCPConn); ok {
 		t.SetNoDelay(true)
 	}
 
-	dst, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetIP, targetPort), 5*time.Second)
+	dst, err := dialOut()
 	if err != nil {
 		return
 	}
@@ -199,7 +237,6 @@ func handleConn(src net.Conn, targetIP string, targetPort int, c *counter) {
 		pipe(src, dst, &c.up)
 		halfCloseWrite(dst)
 	}()
-	// target -> client = download.
 	go func() {
 		defer wg.Done()
 		pipe(dst, src, &c.down)
@@ -209,8 +246,8 @@ func handleConn(src net.Conn, targetIP string, targetPort int, c *counter) {
 }
 
 func halfCloseWrite(c net.Conn) {
-	if t, ok := c.(*net.TCPConn); ok {
-		t.CloseWrite()
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		cw.CloseWrite()
 	}
 }
 

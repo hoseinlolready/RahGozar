@@ -84,6 +84,8 @@ func ensureOwnerExists(db *sql.DB) {
 	cliAddAdminWithRole(db, "owner")
 }
 
+// CLI helpers
+
 func cliAddAdmin(db *sql.DB) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'owner'").Scan(&count)

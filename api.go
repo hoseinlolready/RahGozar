@@ -24,6 +24,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/password", s.requireAuth(s.handlePassword))
 	mux.HandleFunc("/api/rules", s.requireAuth(s.handleRules))
 	mux.HandleFunc("/api/rules/reset", s.requireAuth(s.handleResetRule))
+	mux.HandleFunc("/api/gensecret", s.requireAuth(func(w http.ResponseWriter, r *http.Request, _ *User) {
+		writeJSON(w, 200, map[string]any{"secret": randomHex(16)})
+	}))
 	mux.HandleFunc("/api/admins", s.requireAuth(s.handleAdmins))
 	mux.HandleFunc("/api/stats", s.requireAuth(s.handleStats))
 	return mux
@@ -37,6 +40,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(panelHTML)
 }
+
+// auth plumbing
 
 func tokenFromRequest(r *http.Request) string {
 	c, err := r.Cookie("token")
@@ -76,6 +81,8 @@ func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
 }
+
+// session endpoints
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
@@ -144,6 +151,8 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request, u *User)
 	writeJSON(w, 200, map[string]any{"success": true})
 }
 
+// rules
+
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, u *User) {
 	switch r.Method {
 	case http.MethodGet:
@@ -164,7 +173,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 	var err error
 	filterOwner := r.URL.Query().Get("admin")
 
-	q := `SELECT id, owner, name, listen_port, target_ip, target_port, limit_bytes,
+	q := `SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes,
 		bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
 		FROM rules`
 
@@ -188,7 +197,8 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 	for rows.Next() {
 		var rl Rule
 		var active int
-		if err := rows.Scan(&rl.ID, &rl.Owner, &rl.Name, &rl.ListenPort, &rl.TargetIP, &rl.TargetPort,
+		if err := rows.Scan(&rl.ID, &rl.Owner, &rl.Name, &rl.Role, &rl.Mode, &rl.Secret, &rl.Host,
+			&rl.ListenPort, &rl.TargetIP, &rl.TargetPort,
 			&rl.LimitBytes, &rl.BytesUp, &rl.BytesDown, &rl.Period, &rl.PeriodResetAt, &rl.ExpiryDate,
 			&rl.Note, &active, &rl.CreatedAt); err != nil {
 			continue
@@ -216,17 +226,55 @@ func computeStatus(r Rule, nowTs int64) string {
 }
 
 type ruleInput struct {
-	ID         int64   `json:"id"`
-	Owner      string  `json:"owner"` // owner only: assign tunnel to a specific admin
-	Name       string  `json:"name"`
-	ListenPort int     `json:"listen_port"`
-	TargetIP   string  `json:"target_ip"`
-	TargetPort int     `json:"target_port"`
+	ID         int64  `json:"id"`
+	Owner      string `json:"owner"` // owner only: assign tunnel to a specific admin
+	Name       string `json:"name"`
+	Role       string `json:"role"`   // local | server | client
+	Mode       string `json:"mode"`   // tcp | aes | tls | ws
+	Secret     string `json:"secret"`
+	Host       string `json:"host"`
+	ListenPort int    `json:"listen_port"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
 	LimitGB    float64 `json:"limit_gb"`
-	Period     string  `json:"period"`
-	Expiry     string  `json:"expiry"` // YYYY-MM-DD
-	Note       string  `json:"note"`
-	Active     bool    `json:"active"`
+	Period     string `json:"period"`
+	Expiry     string `json:"expiry"` // YYYY-MM-DD
+	Note       string `json:"note"`
+	Active     bool   `json:"active"`
+}
+
+func validRole(r string) bool {
+	switch r {
+	case "", "local", "server", "client":
+		return true
+	}
+	return false
+}
+
+// normalizeRule fills defaults and checks mode/role coherence.
+func normalizeRule(in *ruleInput) error {
+	if in.Role == "" {
+		in.Role = "local"
+	}
+	if in.Mode == "" {
+		in.Mode = "tcp"
+	}
+	if !validRole(in.Role) {
+		return fmt.Errorf("invalid role")
+	}
+	if !validMode(in.Mode) {
+		return fmt.Errorf("invalid mode")
+	}
+	// local forward never uses a transport
+	if in.Role == "local" {
+		in.Mode = "tcp"
+		in.Secret = ""
+	}
+	// encrypted/obfuscated modes require a shared secret on both ends
+	if (in.Role == "client" || in.Role == "server") && in.Mode != "tcp" && strings.TrimSpace(in.Secret) == "" {
+		return fmt.Errorf("modes aes/tls/ws need a shared secret")
+	}
+	return nil
 }
 
 func parseExpiry(s string) (int64, error) {
@@ -256,6 +304,10 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	if in.ListenPort <= 0 || in.ListenPort > 65535 || in.TargetIP == "" || in.TargetPort <= 0 {
 		writeJSON(w, 400, map[string]any{"error": "listen_port, target_ip and target_port are required"})
+		return
+	}
+	if err := normalizeRule(&in); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
 	if !validPeriod(in.Period) {
@@ -290,9 +342,9 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request, u *User) {
 	limitBytes := int64(in.LimitGB * 1073741824)
 
 	_, err = s.db.Exec(`INSERT INTO rules
-		(owner, name, listen_port, target_ip, target_port, limit_bytes, period, period_reset_at, expiry_date, note, active, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		owner, in.Name, in.ListenPort, in.TargetIP, in.TargetPort, limitBytes, period, periodResetAt, expiry, in.Note, boolToInt(in.Active), now())
+		(owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes, period, period_reset_at, expiry_date, note, active, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		owner, in.Name, in.Role, in.Mode, in.Secret, in.Host, in.ListenPort, in.TargetIP, in.TargetPort, limitBytes, period, periodResetAt, expiry, in.Note, boolToInt(in.Active), now())
 
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -319,6 +371,10 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	if u.Role != "owner" && existingOwner != u.Username {
 		writeJSON(w, 403, map[string]any{"error": "forbidden"})
+		return
+	}
+	if err := normalizeRule(&in); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
 	if !validPeriod(in.Period) {
@@ -353,7 +409,7 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	var curPeriod string
 	s.db.QueryRow("SELECT period FROM rules WHERE id = ?", in.ID).Scan(&curPeriod)
 	periodResetAtClause := ""
-	args := []any{owner, in.Name, in.ListenPort, in.TargetIP, in.TargetPort,
+	args := []any{owner, in.Name, in.Role, in.Mode, in.Secret, in.Host, in.ListenPort, in.TargetIP, in.TargetPort,
 		int64(in.LimitGB * 1073741824), period, expiry, in.Note, boolToInt(in.Active)}
 
 	if period != curPeriod {
@@ -366,7 +422,7 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	args = append(args, in.ID)
 
-	query := fmt.Sprintf(`UPDATE rules SET owner=?, name=?, listen_port=?, target_ip=?, target_port=?,
+	query := fmt.Sprintf(`UPDATE rules SET owner=?, name=?, role=?, mode=?, secret=?, host=?, listen_port=?, target_ip=?, target_port=?,
 		limit_bytes=?, period=?, expiry_date=?, note=?, active=?%s WHERE id=?`, periodResetAtClause)
 
 	if _, err := s.db.Exec(query, args...); err != nil {
@@ -383,9 +439,7 @@ func (s *Server) ruleOwner(id int64) (string, error) {
 }
 
 func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, u *User) {
-	var body struct {
-		ID int64 `json:"id"`
-	}
+	var body struct{ ID int64 `json:"id"` }
 	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, 400, nil)
 		return
@@ -404,9 +458,7 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, u *User) {
 }
 
 func (s *Server) handleResetRule(w http.ResponseWriter, r *http.Request, u *User) {
-	var body struct {
-		ID int64 `json:"id"`
-	}
+	var body struct{ ID int64 `json:"id"` }
 	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, 400, nil)
 		return
@@ -423,6 +475,8 @@ func (s *Server) handleResetRule(w http.ResponseWriter, r *http.Request, u *User
 	s.db.Exec("UPDATE rules SET bytes_up = 0, bytes_down = 0 WHERE id = ?", body.ID)
 	writeJSON(w, 200, map[string]any{"success": true})
 }
+
+// admin management (owner only)
 
 func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 	if u.Role != "owner" {
@@ -482,6 +536,8 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 		writeJSON(w, 405, nil)
 	}
 }
+
+// stats
 
 var processStart = time.Now()
 

@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS rules (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     owner           TEXT NOT NULL,
     name            TEXT NOT NULL DEFAULT '',
+    role            TEXT NOT NULL DEFAULT 'local',
+    mode            TEXT NOT NULL DEFAULT 'tcp',
+    secret          TEXT NOT NULL DEFAULT '',
+    host            TEXT NOT NULL DEFAULT '',
     listen_port     INTEGER NOT NULL UNIQUE,
     target_ip       TEXT NOT NULL,
     target_port     INTEGER NOT NULL,
@@ -42,6 +46,37 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE INDEX IF NOT EXISTS idx_rules_owner ON rules(owner);
 `
 
+// migrate adds columns introduced after the first release to databases that
+// were created by an earlier version. SQLite ignores duplicate-column errors
+// here because we only call this on an existing table.
+func migrate(db *sql.DB) {
+	cols := map[string]string{
+		"role":   "TEXT NOT NULL DEFAULT 'local'",
+		"mode":   "TEXT NOT NULL DEFAULT 'tcp'",
+		"secret": "TEXT NOT NULL DEFAULT ''",
+		"host":   "TEXT NOT NULL DEFAULT ''",
+	}
+	rows, err := db.Query("PRAGMA table_info(rules)")
+	if err != nil {
+		return
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk)
+		have[name] = true
+	}
+	rows.Close()
+	for col, def := range cols {
+		if !have[col] {
+			db.Exec("ALTER TABLE rules ADD COLUMN " + col + " " + def)
+		}
+	}
+}
+
 func openDB(path string) (*sql.DB, error) {
 	dsn := path + "?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"
 	db, err := sql.Open("sqlite3", dsn)
@@ -53,6 +88,7 @@ func openDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
+	migrate(db)
 	return db, nil
 }
 
