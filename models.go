@@ -1,6 +1,5 @@
 package main
 
-// User is an admin (or owner) account that can log into the panel.
 type User struct {
 	Username     string `json:"username"`
 	PasswordHash string `json:"-"`

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# RahGozar installer
-# Usage:  sudo bash -c "$(curl -sL <raw-url>/scripts/installer.sh)"
 set -euo pipefail
 
 REPO="hoseinlolready/RahGozar"
@@ -35,13 +33,7 @@ if ! curl -fSL "$URL" -o "$BIN"; then
 fi
 chmod +x "$BIN"
 
-# CLI wrapper: `rahgozar` manages accounts; bare service is run by systemd.
 cat > /usr/local/bin/rahgozar <<EOF
-#!/usr/bin/env bash
-# RahGozar admin CLI. Examples:
-#   rahgozar add-admin     create an admin (or the owner, the first time)
-#   rahgozar list-admins   list accounts
-#   rahgozar del-admin foo delete an admin and their tunnels
 DB="$DB"
 BIN="$BIN"
 case "\${1:-}" in
@@ -62,7 +54,6 @@ esac
 EOF
 chmod +x /usr/local/bin/rahgozar
 
-# Create the owner account interactively if the database is brand new.
 if [[ ! -f "$DB" ]]; then
   echo
   echo "No database found - let's create the owner account now."

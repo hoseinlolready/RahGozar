@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Build static RahGozar binaries for linux/amd64 and linux/arm64.
-# Requires: Go 1.21+, gcc, and (for arm64) gcc-aarch64-linux-gnu.
 set -euo pipefail
 
 cd "$(dirname "$0")"

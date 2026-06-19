@@ -16,9 +16,6 @@ const (
 	sessionTTL       = 30 * 24 * 3600 // 30 days, matches the old cookie lifetime
 )
 
-// pbkdf2SHA256 derives a key using PBKDF2-HMAC-SHA256.
-// Implemented locally so the binary has exactly one external dependency
-// (the sqlite driver) and stays trivial to cross-compile.
 func pbkdf2SHA256(password, salt []byte, iterations, keyLen int) []byte {
 	prf := hmac.New(sha256.New, password)
 	hashLen := prf.Size()
@@ -61,7 +58,6 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// hashPassword returns "salt$hash", both hex-encoded.
 func hashPassword(password string) string {
 	salt := make([]byte, saltBytes)
 	rand.Read(salt)

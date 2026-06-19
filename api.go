@@ -41,8 +41,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(panelHTML)
 }
 
-// auth plumbing
-
 func tokenFromRequest(r *http.Request) string {
 	c, err := r.Cookie("token")
 	if err != nil {
@@ -81,8 +79,6 @@ func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
 }
-
-// session endpoints
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
@@ -150,8 +146,6 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request, u *User)
 	s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", hashPassword(body.New), u.Username)
 	writeJSON(w, 200, map[string]any{"success": true})
 }
-
-// rules
 
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, u *User) {
 	switch r.Method {
@@ -251,7 +245,6 @@ func validRole(r string) bool {
 	return false
 }
 
-// normalizeRule fills defaults and checks mode/role coherence.
 func normalizeRule(in *ruleInput) error {
 	if in.Role == "" {
 		in.Role = "local"
@@ -265,14 +258,22 @@ func normalizeRule(in *ruleInput) error {
 	if !validMode(in.Mode) {
 		return fmt.Errorf("invalid mode")
 	}
-	// local forward never uses a transport
 	if in.Role == "local" {
 		in.Mode = "tcp"
 		in.Secret = ""
 	}
-	// encrypted/obfuscated modes require a shared secret on both ends
-	if (in.Role == "client" || in.Role == "server") && in.Mode != "tcp" && strings.TrimSpace(in.Secret) == "" {
-		return fmt.Errorf("modes aes/tls/ws need a shared secret")
+	if in.Mode != "tcp" && in.Role == "local" {
+		return fmt.Errorf("mode %s requires a client or server role", in.Mode)
+	}
+	needsSecret := in.Mode == "aes" || in.Mode == "tls" || in.Mode == "ws" || in.Mode == "icmp"
+	if (in.Role == "client" || in.Role == "server") && needsSecret && strings.TrimSpace(in.Secret) == "" {
+		return fmt.Errorf("mode %s needs a shared secret", in.Mode)
+	}
+	if in.Mode == "sit" {
+		in.Secret = ""
+		if in.Role != "client" && in.Role != "server" {
+			return fmt.Errorf("sit mode requires a client or server role")
+		}
 	}
 	return nil
 }
@@ -405,7 +406,6 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 		period = "none"
 	}
 
-	// only reschedule the reset window if the period actually changed
 	var curPeriod string
 	s.db.QueryRow("SELECT period FROM rules WHERE id = ?", in.ID).Scan(&curPeriod)
 	periodResetAtClause := ""
@@ -476,8 +476,6 @@ func (s *Server) handleResetRule(w http.ResponseWriter, r *http.Request, u *User
 	writeJSON(w, 200, map[string]any{"success": true})
 }
 
-// admin management (owner only)
-
 func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 	if u.Role != "owner" {
 		writeJSON(w, 403, map[string]any{"error": "owner only"})
@@ -537,8 +535,6 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 }
 
-// stats
-
 var processStart = time.Now()
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, u *User) {
@@ -554,7 +550,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, u *User) {
 	row := s.db.QueryRow(fmt.Sprintf("SELECT COUNT(*), COALESCE(SUM(active),0) FROM rules %s", scope), args...)
 	row.Scan(&stats.TotalRules, &stats.ActiveRules)
 
-	// Sum live rates across this user's rules.
 	rows, _ := s.db.Query(fmt.Sprintf("SELECT id FROM rules %s AND active = 1", scope), args...)
 	if rows != nil {
 		for rows.Next() {
@@ -595,7 +590,6 @@ func getSystemStats() SysStats {
 	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
 		var load1 float64
 		fmt.Sscanf(string(data), "%f", &load1)
-		// crude approximation: load relative to core count, capped at 100%
 		ncpu := 1
 		if cpuinfo, err := os.ReadFile("/proc/cpuinfo"); err == nil {
 			ncpu = strings.Count(string(cpuinfo), "processor")

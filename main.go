@@ -84,8 +84,6 @@ func ensureOwnerExists(db *sql.DB) {
 	cliAddAdminWithRole(db, "owner")
 }
 
-// CLI helpers
-
 func cliAddAdmin(db *sql.DB) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'owner'").Scan(&count)
@@ -162,8 +160,6 @@ func cliDelAdmin(db *sql.DB, username string) {
 
 func readPassword(prompt string) string {
 	fmt.Print(prompt)
-	// Disable terminal echo via stty if available (standard on the Linux
-	// servers this runs on); otherwise fall back to a plain read.
 	disabled := false
 	if _, err := exec.LookPath("stty"); err == nil {
 		c := exec.Command("stty", "-echo")

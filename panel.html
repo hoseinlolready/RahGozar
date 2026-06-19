@@ -50,7 +50,6 @@
   .mono{font-family:var(--mono)}
   .hidden{display:none!important}
 
-  /* Login */
   .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
   .login-card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);
     border-radius:var(--r);padding:34px 30px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
@@ -74,7 +73,6 @@
   .btn-sm{padding:7px 11px;font-size:12.5px;border-radius:8px}
   .err{color:var(--bad);font-size:12.5px;margin-top:10px;min-height:16px}
 
-  /* App shell */
   .app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
   .side{background:var(--bg-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column}
   .side .brand{margin-bottom:26px}
@@ -96,7 +94,6 @@
   .head h2{font-family:var(--display);font-size:21px;font-weight:700;letter-spacing:-.2px}
   .head .desc{color:var(--txt-dim);font-size:13px;margin-top:2px}
 
-  /* Stat row */
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:22px}
   .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden}
   .stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--txt-faint);font-weight:600;display:flex;align-items:center;gap:7px}
@@ -108,7 +105,6 @@
   .dot.up{background:var(--up);box-shadow:0 0 8px var(--up)}
   .dot.down{background:var(--down);box-shadow:0 0 8px var(--down)}
 
-  /* Table */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
   .card-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line-soft)}
   .card-head h3{font-size:14px;font-weight:600}
@@ -131,7 +127,6 @@
   .b-expired{background:rgba(251,191,36,.13);color:var(--warn);border-color:rgba(251,191,36,.25)}
   .b-limited{background:rgba(248,113,113,.13);color:var(--bad);border-color:rgba(248,113,113,.25)}
 
-  /* up/down split cell */
   .traf{display:flex;flex-direction:column;gap:3px;min-width:140px}
   .traf .line{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px}
   .traf .line .lbl{color:var(--txt-faint);font-size:10px;width:30px;font-family:var(--sans);font-weight:600;text-transform:uppercase}
@@ -152,7 +147,6 @@
   .empty{padding:48px 20px;text-align:center;color:var(--txt-faint)}
   .empty svg{width:34px;height:34px;opacity:.5;margin-bottom:10px}
 
-  /* Modal */
   .overlay{position:fixed;inset:0;background:rgba(4,7,12,.72);backdrop-filter:blur(4px);
     display:flex;align-items:flex-start;justify-content:center;padding:40px 20px;z-index:50;overflow:auto}
   .modal{width:100%;max-width:540px;background:var(--panel);border:1px solid var(--line);
@@ -168,10 +162,10 @@
   .mode-tag{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:3px;
     background:rgba(47,215,200,.12);color:var(--up);margin-left:6px}
   .role-pill{font-size:9.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-faint)}
+  code{font-family:var(--mono);font-size:11px;background:var(--bg-soft);padding:1px 5px;border-radius:3px;color:var(--up)}
   .x{width:30px;height:30px;border-radius:8px;color:var(--txt-dim)}
   .x:hover{background:var(--panel-2);color:var(--txt)}
 
-  /* toast */
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);
     background:var(--panel-2);border:1px solid var(--line);padding:11px 18px;border-radius:10px;
     font-size:13px;opacity:0;transition:.25s;z-index:80;box-shadow:0 10px 30px rgba(0,0,0,.4)}
@@ -326,14 +320,17 @@
         </div>
         <div class="field" id="r-mode-wrap"><label>Tunnel mode</label>
           <select id="r-mode" onchange="modeChanged()">
-            <option value="tcp">tcp · plain</option>
-            <option value="aes">aes · encrypted (looks random)</option>
-            <option value="tls">tls · looks like HTTPS</option>
-            <option value="ws">ws · WebSocket / CDN-friendly</option>
+            <option value="tcp">tcp</option>
+            <option value="aes">aes</option>
+            <option value="tls">tls</option>
+            <option value="ws">ws</option>
+            <option value="icmp">icmp</option>
+            <option value="sit">sit</option>
           </select>
         </div>
       </div>
       <div class="role-hint" id="r-role-hint"></div>
+      <div class="hint" id="r-mode-note" style="margin-top:-8px;margin-bottom:12px"></div>
 
       <div class="field hidden" id="r-secret-wrap">
         <label>Shared secret <span style="color:var(--txt-faint);text-transform:none;letter-spacing:0">— must match on both nodes</span></label>
@@ -396,7 +393,6 @@
 let ME = null;
 let POLL = null;
 
-// helpers
 async function api(path, method='GET', body=null){
   const opt={method,headers:{}};
   if(body){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
@@ -424,7 +420,6 @@ function fmtRate(bps){
 function fmtDate(ts){return ts?new Date(ts*1000).toISOString().slice(0,10):'—';}
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
-// auth
 async function doLogin(){
   const u=$('li-user').value.trim(),p=$('li-pass').value;
   const r=await api('/api/login','POST',{U:u,P:p});
@@ -442,7 +437,6 @@ async function changePw(){
   else toast(r.data.error||'Could not update password.','bad');
 }
 
-// nav
 function nav(view){
   document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('on',b.dataset.view===view));
   ['tunnels','admins','account'].forEach(v=>$('v-'+v).classList.toggle('hidden',v!==view));
@@ -450,7 +444,6 @@ function nav(view){
   if(view==='tunnels')loadRules();
 }
 
-// stats
 async function loadStats(){
   const r=await api('/api/stats');if(!r.ok)return;const s=r.data;
   const cards=[
@@ -466,7 +459,6 @@ async function loadStats(){
     ${c.meter!==undefined?`<div class="meter"><span style="width:${Math.min(c.meter,100)}%;background:${c.mc}"></span></div>`:''}</div>`).join('');
 }
 
-// rules
 async function loadRules(){
   let path='/api/rules';
   const f=$('admin-filter');
@@ -507,7 +499,6 @@ async function loadRules(){
   }).join('');
 }
 
-// role/mode UI dynamics ---------------------------------------------------
 const ROLE_HINTS={
   local:"Plain port forward on this server: traffic on the listen port goes straight to the target. No tunnel.",
   server:"This is your <b>exit</b> (abroad). It accepts the tunnel on the listen port, decrypts it, and forwards to your real local service (e.g. Xray) at the target.",
@@ -519,7 +510,6 @@ function roleChanged(){
   const tunneled = role==='server'||role==='client';
   $('r-mode-wrap').classList.toggle('hidden',!tunneled);
   modeChanged();
-  // relabel the three connection fields to match the role
   if(role==='server'){
     $('r-lport-lbl').textContent='Link port (tunnel in)';
     $('r-tip-lbl').textContent='Local service IP';
@@ -537,10 +527,27 @@ function roleChanged(){
 function modeChanged(){
   const role=$('r-role').value, mode=$('r-mode').value;
   const tunneled=(role==='server'||role==='client');
-  const needsSecret = tunneled && mode!=='tcp';
+  const needsSecret = tunneled && (mode==='aes'||mode==='tls'||mode==='ws'||mode==='icmp');
   const needsHost = tunneled && (mode==='tls'||mode==='ws');
   $('r-secret-wrap').classList.toggle('hidden',!needsSecret);
   $('r-host-wrap').classList.toggle('hidden',!needsHost);
+
+  if(tunneled && mode==='sit'){
+    if(role==='server'){
+      $('r-lport-lbl').textContent='Link port';
+      $('r-tip-lbl').textContent='Entry server public IP';
+      $('r-tport-lbl').textContent='Local service port';
+    }else{
+      $('r-lport-lbl').textContent='User port (publish)';
+      $('r-tip-lbl').textContent='Exit server public IP';
+      $('r-tport-lbl').textContent='Exit link port';
+    }
+  }
+
+  const note=$('r-mode-note');
+  if(mode==='icmp') note.innerHTML='Tunnels data inside ICMP echo (ping). Both nodes need <b>root</b>; on the exit set <code>sysctl -w net.ipv4.icmp_echo_ignore_all=1</code> so only our replies go out. One ICMP exit per server.';
+  else if(mode==='sit') note.innerHTML='Kernel IPv6-in-IPv4 (protocol 41). Both nodes need <b>root</b> and must point <code>target IP</code> at each other\'s public IP. The exit\'s link port and the entry\'s link port must match.';
+  else note.innerHTML='';
 }
 async function genSecret(){
   const r=await api('/api/gensecret');
@@ -605,7 +612,6 @@ async function resetRule(id){
   await api('/api/rules/reset','POST',{id});loadRules();toast('Traffic counter reset.','ok');
 }
 
-// admins
 async function loadAdmins(){
   const r=await api('/api/admins');if(!r.ok)return;
   const admins=r.data.admins||[];
@@ -616,7 +622,6 @@ async function loadAdmins(){
     <td class="target">${fmtDate(a.created_at)}</td>
     <td><button class="iconbtn danger" title="Delete admin" onclick="delAdmin('${esc(a.username)}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button></td>
   </tr>`).join('');
-  // refresh filter + owner select
   const opts='<option value="">All admins</option>'+admins.map(a=>`<option value="${esc(a.username)}">${esc(a.username)}</option>`).join('');
   $('admin-filter').innerHTML=opts;
 }
@@ -641,7 +646,6 @@ async function delAdmin(u){
   await api('/api/admins','DELETE',{Username:u});loadAdmins();toast('Admin deleted.');
 }
 
-// boot
 async function boot(){
   const r=await api('/api/me');
   if(!r.data.auth){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}

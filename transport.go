@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,13 +47,15 @@ func getTransport(mode string) (Transport, error) {
 		return tlsTransport{}, nil
 	case "ws":
 		return wsTransport{}, nil
+	case "icmp":
+		return icmpTransport{}, nil
 	}
 	return nil, fmt.Errorf("unknown tunnel mode %q", mode)
 }
 
 func validMode(m string) bool {
 	switch m {
-	case "", "tcp", "aes", "tls", "ws":
+	case "", "tcp", "aes", "tls", "ws", "icmp", "sit":
 		return true
 	}
 	return false
@@ -115,6 +118,9 @@ func (l *aesListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	if t, ok := c.(*net.TCPConn); ok {
+		t.SetNoDelay(true)
+	}
 	gcm, err := newGCM(l.key)
 	if err != nil {
 		c.Close()
@@ -134,7 +140,7 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 type aesConn struct {
 	net.Conn
 	gcm    cipher.AEAD
-	rbuf   []byte
+	rbuf   []byte // leftover decrypted plaintext not yet handed to Read
 	reader *bufio.Reader
 }
 
@@ -212,7 +218,6 @@ func (c *aesConn) CloseWrite() error {
 }
 
 func (c *aesConn) writeRecord(payload []byte) error {
-	// random padding: 0..255 bytes, hides true payload sizes from DPI
 	var padByte [1]byte
 	rand.Read(padByte[:])
 	padLen := int(padByte[0])
@@ -252,7 +257,7 @@ func (tlsTransport) Listen(addr string, opt TransportOpt) (net.Listener, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &authListener{Listener: ln, secret: opt.Secret}, nil
+	return newAuthListener(ln, opt.Secret), nil
 }
 
 func (tlsTransport) Dial(addr string, opt TransportOpt) (net.Conn, error) {
@@ -281,30 +286,64 @@ func hostOr(h string) string {
 }
 
 type authListener struct {
-	net.Listener
+	inner  net.Listener
 	secret string
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
 }
 
-func (l *authListener) Accept() (net.Conn, error) {
+func newAuthListener(inner net.Listener, secret string) *authListener {
+	l := &authListener{
+		inner:  inner,
+		secret: secret,
+		conns:  make(chan net.Conn, 128),
+		closed: make(chan struct{}),
+	}
+	go l.acceptLoop()
+	return l
+}
+
+func (l *authListener) acceptLoop() {
 	for {
-		c, err := l.Listener.Accept()
+		c, err := l.inner.Accept()
 		if err != nil {
-			return nil, err
+			return
 		}
-		c.SetReadDeadline(time.Now().Add(10 * time.Second))
-		if err := readAuth(c, l.secret); err != nil {
-			c.Close()
-			continue // bad/scanning client; drop and keep listening
-		}
-		c.SetReadDeadline(time.Time{})
-		return c, nil
+		go func(c net.Conn) {
+			c.SetReadDeadline(time.Now().Add(10 * time.Second))
+			if err := readAuth(c, l.secret); err != nil {
+				c.Close()
+				return
+			}
+			c.SetReadDeadline(time.Time{})
+			select {
+			case l.conns <- c:
+			case <-l.closed:
+				c.Close()
+			}
+		}(c)
 	}
 }
 
+func (l *authListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, errors.New("listener closed")
+	}
+}
+
+func (l *authListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return l.inner.Close()
+}
+
+func (l *authListener) Addr() net.Addr { return l.inner.Addr() }
+
 const authMagicLen = 32
 
-// writeAuth sends HMAC-SHA256(secret, "auth") so the exit can verify the peer
-// knows the shared secret without revealing it.
 func writeAuth(c net.Conn, secret string) error {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("rahgozar-auth"))
@@ -364,7 +403,7 @@ func (wsTransport) Listen(addr string, opt TransportOpt) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &wsListener{Listener: base, secret: opt.Secret}, nil
+	return newWSListener(base, opt.Secret), nil
 }
 
 func (wsTransport) Dial(addr string, opt TransportOpt) (net.Conn, error) {
@@ -422,41 +461,79 @@ func authToken(secret string) string {
 }
 
 type wsListener struct {
-	net.Listener
+	inner  net.Listener
 	secret string
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newWSListener(inner net.Listener, secret string) *wsListener {
+	l := &wsListener{
+		inner:  inner,
+		secret: secret,
+		conns:  make(chan net.Conn, 128),
+		closed: make(chan struct{}),
+	}
+	go l.acceptLoop()
+	return l
+}
+
+func (l *wsListener) acceptLoop() {
+	for {
+		c, err := l.inner.Accept()
+		if err != nil {
+			return
+		}
+		go l.handshake(c)
+	}
+}
+
+func (l *wsListener) handshake(c net.Conn) {
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(c)
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		c.Close()
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(req.Header.Get("X-Auth")), []byte(authToken(l.secret))) != 1 {
+		c.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"))
+		c.Close()
+		return
+	}
+	accept := wsAcceptKey(req.Header.Get("Sec-WebSocket-Key"))
+	resp := "HTTP/1.1 101 Switching Protocols\r\n" +
+		"Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+		"Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
+	if _, err := c.Write([]byte(resp)); err != nil {
+		c.Close()
+		return
+	}
+	c.SetReadDeadline(time.Time{})
+	wc := &wsConn{Conn: c, r: br, client: false}
+	select {
+	case l.conns <- wc:
+	case <-l.closed:
+		c.Close()
+	}
 }
 
 func (l *wsListener) Accept() (net.Conn, error) {
-	for {
-		c, err := l.Listener.Accept()
-		if err != nil {
-			return nil, err
-		}
-		c.SetReadDeadline(time.Now().Add(10 * time.Second))
-		br := bufio.NewReader(c)
-		req, err := http.ReadRequest(br)
-		if err != nil {
-			c.Close()
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(req.Header.Get("X-Auth")), []byte(authToken(l.secret))) != 1 {
-			// respond like a normal site to a stray request, then drop
-			c.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"))
-			c.Close()
-			continue
-		}
-		accept := wsAcceptKey(req.Header.Get("Sec-WebSocket-Key"))
-		resp := "HTTP/1.1 101 Switching Protocols\r\n" +
-			"Upgrade: websocket\r\nConnection: Upgrade\r\n" +
-			"Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
-		if _, err := c.Write([]byte(resp)); err != nil {
-			c.Close()
-			continue
-		}
-		c.SetReadDeadline(time.Time{})
-		return &wsConn{Conn: c, r: br, client: false}, nil
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, errors.New("listener closed")
 	}
 }
+
+func (l *wsListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return l.inner.Close()
+}
+
+func (l *wsListener) Addr() net.Addr { return l.inner.Addr() }
 
 func wsAcceptKey(key string) string {
 	const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"

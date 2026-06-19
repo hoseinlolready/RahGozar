@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# RahGozar uninstaller
-# Usage:  sudo bash -c "$(curl -sL <raw-url>/scripts/uninstaller.sh)"
 set -euo pipefail
 
 INSTALL_DIR="/opt/rahgozar"

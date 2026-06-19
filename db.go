@@ -46,9 +46,6 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE INDEX IF NOT EXISTS idx_rules_owner ON rules(owner);
 `
 
-// migrate adds columns introduced after the first release to databases that
-// were created by an earlier version. SQLite ignores duplicate-column errors
-// here because we only call this on an existing table.
 func migrate(db *sql.DB) {
 	cols := map[string]string{
 		"role":   "TEXT NOT NULL DEFAULT 'local'",

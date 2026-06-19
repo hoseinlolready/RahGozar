@@ -36,8 +36,12 @@ Each tunnel runs in one of four modes. Modes only apply to `client`/`server` rol
 | `aes` | AES-256-GCM, padded, no fixed header — looks like random data | signature/keyword DPI; nothing to fingerprint |
 | `tls` | a real TLS 1.3 session — indistinguishable from HTTPS | **the default recommendation for Iran** |
 | `ws` | HTTP/WebSocket frames, optionally over TLS | when you want to ride a CDN (e.g. ArvanCloud) on 80/443 |
+| `icmp` | reliable, multiplexed, encrypted stream carried inside ICMP echo (ping) | when TCP/UDP are throttled but ping still works; needs root |
+| `sit` | kernel IPv6-in-IPv4 (IP protocol 41) | a fast point-to-point link that sidesteps TCP/UDP inspection; needs root |
 
-For `aes`, `tls`, and `ws` you set a **shared secret** that must match on both the entry and the exit; it authenticates the link and (for `aes`) derives the encryption key. `tls`/`ws` also take an optional **SNI/Host** for camouflage. For `ws`, prefix the host with `tls:` (e.g. `tls:example.com`) to run it as WebSocket-over-TLS (wss).
+For `aes`, `tls`, `ws`, and `icmp` you set a **shared secret** that must match on both the entry and the exit; it authenticates the link and derives the encryption key. `tls`/`ws` also take an optional **SNI/Host** for camouflage. For `ws`, prefix the host with `tls:` (e.g. `tls:example.com`) to run it as WebSocket-over-TLS (wss).
+
+`icmp` and `sit` both require root / CAP_NET_RAW (raw sockets) or CAP_NET_ADMIN (kernel tunnel). For `icmp`, set `sysctl -w net.ipv4.icmp_echo_ignore_all=1` on the exit so the kernel's own ping replies don't add noise (one ICMP exit per server). For `sit`, point each node's target IP at the other's public IP, and keep the entry's and exit's link ports equal.
 
 ## Roles — how a two-server setup works
 

@@ -142,11 +142,29 @@ func (m *Manager) start(r Rule, hash string) {
 	listenAddr := fmt.Sprintf(":%d", r.ListenPort)
 	targetAddr := fmt.Sprintf("%s:%d", r.TargetIP, r.TargetPort)
 
+	isSIT := r.Mode == "sit" && (r.Role == "server" || r.Role == "client")
+	if isSIT {
+		if r.Role == "server" {
+			if _, e := ensureSIT(r.ListenPort, r.TargetIP, true); e != nil {
+				log.Printf("tunnel #%d sit setup failed: %v", r.ID, e)
+				return
+			}
+			targetAddr = fmt.Sprintf("127.0.0.1:%d", r.TargetPort)
+		} else {
+			peerPriv, e := ensureSIT(r.TargetPort, r.TargetIP, false)
+			if e != nil {
+				log.Printf("tunnel #%d sit setup failed: %v", r.ID, e)
+				return
+			}
+			targetAddr = fmt.Sprintf("%s:%d", peerPriv, r.TargetPort)
+		}
+	}
+
 	var ln net.Listener
 	var err error
 
-	switch r.Role {
-	case "server":
+	switch {
+	case r.Role == "server" && !isSIT:
 		t, terr := getTransport(r.Mode)
 		if terr != nil {
 			log.Printf("tunnel #%d: %v", r.ID, terr)
@@ -154,10 +172,7 @@ func (m *Manager) start(r Rule, hash string) {
 		}
 		ln, err = t.Listen(listenAddr, opt)
 
-	case "client":
-		ln, err = net.Listen("tcp", listenAddr)
-
-	default:
+	default: // client, local, or any SIT role: plain TCP listener
 		ln, err = net.Listen("tcp", listenAddr)
 	}
 
@@ -181,7 +196,7 @@ func (m *Manager) start(r Rule, hash string) {
 	c := m.getCounter(r.ID)
 
 	dialOut := func() (net.Conn, error) { return dialTimeout(targetAddr) }
-	if r.Role == "client" {
+	if r.Role == "client" && !isSIT {
 		t, terr := getTransport(r.Mode)
 		if terr != nil {
 			log.Printf("tunnel #%d: %v", r.ID, terr)
