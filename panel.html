@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RahGozar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#04060b;
+    --bg-soft:#070b12;
+    --panel:#080d16;
+    --panel-2:#0c131f;
+    --line:#16202f;
+    --line-soft:#101824;
+    --txt:#e9eef6;
+    --txt-dim:#7d8aa0;
+    --txt-faint:#4c576b;
+    --up:#2fd7c8;       /* cyan — upload / outbound */
+    --down:#f0a64a;     /* amber — download / inbound */
+    --accent:#3b82f6;
+    --accent-2:#2563eb;
+    --ok:#2fd39a;
+    --warn:#fbbf24;
+    --bad:#f87171;
+    --mono:"Space Grotesk","SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:"Space Grotesk",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --display:"Space Grotesk",system-ui,sans-serif;
+    --r:4px;
+    --r-sm:3px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--txt);
+    font-family:var(--sans);
+    font-size:14px;
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1000px 520px at 100% -8%, rgba(59,130,246,.10), transparent 60%),
+      radial-gradient(760px 520px at -10% 108%, rgba(47,215,200,.05), transparent 55%);
+  }
+  a{color:inherit}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select{font-family:inherit;font-size:14px}
+  .mono{font-family:var(--mono)}
+  .hidden{display:none!important}
+
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .login-card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--r);padding:34px 30px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .brand{display:flex;flex-direction:column;gap:1px;margin-bottom:6px}
+  .brand h1{font-family:var(--display);font-size:21px;font-weight:700;letter-spacing:.5px}
+  .brand h1 .accent{color:var(--accent)}
+  .brand .sub{color:var(--txt-faint);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;font-weight:500}
+  .login-card .lead{color:var(--txt-dim);font-size:13px;margin:14px 0 22px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.09em;
+    color:var(--txt-faint);margin-bottom:6px;font-weight:600}
+  .field input,.field select{width:100%;background:var(--bg-soft);border:1px solid var(--line);
+    color:var(--txt);padding:11px 13px;border-radius:var(--r-sm);outline:none;transition:border-color .15s}
+  .field input:focus,.field select:focus{border-color:var(--accent)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    padding:11px 16px;border-radius:var(--r-sm);font-weight:600;font-size:13.5px;transition:.15s;white-space:nowrap}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;width:100%}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-ghost{background:var(--panel-2);border:1px solid var(--line);color:var(--txt-dim)}
+  .btn-ghost:hover{color:var(--txt);border-color:var(--txt-faint)}
+  .btn-sm{padding:7px 11px;font-size:12.5px;border-radius:8px}
+  .err{color:var(--bad);font-size:12.5px;margin-top:10px;min-height:16px}
+
+  .app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+  .side{background:var(--bg-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column}
+  .side .brand{margin-bottom:26px}
+  .nav{display:flex;flex-direction:column;gap:3px}
+  .nav button{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:var(--r-sm);
+    color:var(--txt-dim);font-size:13.5px;font-weight:500;text-align:left;width:100%;transition:.13s}
+  .nav button:hover{background:var(--panel);color:var(--txt)}
+  .nav button.on{background:var(--panel-2);color:var(--txt)}
+  .nav button.on .ic{color:var(--up)}
+  .ic{width:17px;height:17px;flex:none;color:var(--txt-faint);transition:.13s}
+  .side-foot{margin-top:auto;padding-top:18px;border-top:1px solid var(--line-soft)}
+  .who{font-size:12.5px;color:var(--txt-dim);margin-bottom:4px}
+  .who b{color:var(--txt)}
+  .role-tag{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    padding:2px 7px;border-radius:3px;background:rgba(59,130,246,.14);color:var(--accent);font-weight:600;margin-left:6px}
+
+  .main{padding:26px 30px;overflow:auto;max-height:100vh}
+  .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;gap:14px;flex-wrap:wrap}
+  .head h2{font-family:var(--display);font-size:21px;font-weight:700;letter-spacing:-.2px}
+  .head .desc{color:var(--txt-dim);font-size:13px;margin-top:2px}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:22px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden}
+  .stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--txt-faint);font-weight:600;display:flex;align-items:center;gap:7px}
+  .stat .v{font-size:24px;font-weight:700;margin-top:8px;letter-spacing:-.5px;font-family:var(--mono)}
+  .stat .v small{font-size:13px;color:var(--txt-dim);font-weight:500;font-family:var(--sans)}
+  .stat .meter{height:4px;background:var(--line);border-radius:4px;margin-top:12px;overflow:hidden}
+  .stat .meter span{display:block;height:100%;border-radius:4px;transition:width .4s}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .dot.up{background:var(--up);box-shadow:0 0 8px var(--up)}
+  .dot.down{background:var(--down);box-shadow:0 0 8px var(--down)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .card-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line-soft)}
+  .card-head h3{font-size:14px;font-weight:600}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .table-scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead th{text-align:left;padding:11px 16px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--txt-faint);font-weight:600;background:var(--bg-soft);border-bottom:1px solid var(--line-soft);white-space:nowrap}
+  tbody td{padding:13px 16px;border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(255,255,255,.018)}
+  .port{font-family:var(--mono);color:var(--up);background:rgba(52,211,196,.1);padding:2px 8px;border-radius:6px;font-size:12.5px}
+  .target{font-family:var(--mono);color:var(--txt-dim);font-size:12.5px}
+  .name-cell b{font-weight:600}
+  .name-cell .owner{color:var(--txt-faint);font-size:11.5px}
+
+  .badge{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:3px;border:1px solid transparent}
+  .b-active{background:rgba(52,211,153,.13);color:var(--ok);border-color:rgba(52,211,153,.25)}
+  .b-inactive{background:rgba(139,151,171,.12);color:var(--txt-dim);border-color:var(--line)}
+  .b-expired{background:rgba(251,191,36,.13);color:var(--warn);border-color:rgba(251,191,36,.25)}
+  .b-limited{background:rgba(248,113,113,.13);color:var(--bad);border-color:rgba(248,113,113,.25)}
+
+  .traf{display:flex;flex-direction:column;gap:3px;min-width:140px}
+  .traf .line{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px}
+  .traf .line .lbl{color:var(--txt-faint);font-size:10px;width:30px;font-family:var(--sans);font-weight:600;text-transform:uppercase}
+  .traf .u{color:var(--up)} .traf .d{color:var(--down)}
+  .traf .rate{color:var(--txt-faint);font-size:10.5px}
+  .quota{margin-top:5px;min-width:130px}
+  .quota .bar{height:5px;background:var(--line);border-radius:4px;overflow:hidden;display:flex}
+  .quota .bar .bu{background:var(--up)} .quota .bar .bd{background:var(--down)}
+  .quota .txt{font-size:10.5px;color:var(--txt-faint);margin-top:3px;font-family:var(--mono)}
+
+  .row-actions{display:flex;gap:5px}
+  .iconbtn{width:30px;height:30px;border-radius:8px;background:var(--panel-2);border:1px solid var(--line);
+    display:inline-flex;align-items:center;justify-content:center;color:var(--txt-dim);transition:.13s}
+  .iconbtn:hover{color:var(--txt);border-color:var(--txt-faint)}
+  .iconbtn.danger:hover{color:var(--bad);border-color:var(--bad)}
+  .iconbtn svg{width:15px;height:15px}
+
+  .empty{padding:48px 20px;text-align:center;color:var(--txt-faint)}
+  .empty svg{width:34px;height:34px;opacity:.5;margin-bottom:10px}
+
+  .overlay{position:fixed;inset:0;background:rgba(4,7,12,.72);backdrop-filter:blur(4px);
+    display:flex;align-items:flex-start;justify-content:center;padding:40px 20px;z-index:50;overflow:auto}
+  .modal{width:100%;max-width:540px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--r);box-shadow:0 30px 70px rgba(0,0,0,.55)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line-soft)}
+  .modal-head h3{font-size:16px;font-weight:700}
+  .modal-body{padding:22px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--line-soft)}
+  .hint{font-size:11.5px;color:var(--txt-faint);margin-top:5px}
+  .x{width:30px;height:30px;border-radius:8px;color:var(--txt-dim)}
+  .x:hover{background:var(--panel-2);color:var(--txt)}
+
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--panel-2);border:1px solid var(--line);padding:11px 18px;border-radius:10px;
+    font-size:13px;opacity:0;transition:.25s;z-index:80;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.bad{border-color:var(--bad);color:var(--bad)}
+  .toast.ok{border-color:var(--ok)}
+
+  @media(max-width:820px){
+    .app{grid-template-columns:1fr}
+    .side{flex-direction:row;align-items:center;border-right:none;border-bottom:1px solid var(--line);padding:12px 14px;overflow-x:auto}
+    .side .brand{margin-bottom:0;margin-right:10px}
+    .nav{flex-direction:row}
+    .side-foot{margin:0 0 0 auto;padding:0;border:none}
+    .grid2{grid-template-columns:1fr}
+    .main{padding:18px}
+  }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="brand">
+      <h1>Rah<span class="accent">Gozar</span></h1>
+      <div class="sub">Tunnel Control</div>
+    </div>
+    <p class="lead">Sign in to manage your tunnels.</p>
+    <div class="field">
+      <label>Username</label>
+      <input id="li-user" autocomplete="username" autofocus>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="li-pass" type="password" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
+    <div class="err" id="li-err"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="app hidden">
+  <aside class="side">
+    <div class="brand">
+      <h1 style="font-size:18px">Rah<span class="accent">Gozar</span></h1>
+      <div class="sub" style="font-size:9.5px">Tunnel Control</div>
+    </div>
+    <nav class="nav">
+      <button class="on" data-view="tunnels" onclick="nav('tunnels')">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        Tunnels
+      </button>
+      <button data-view="admins" id="nav-admins" onclick="nav('admins')">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
+        Admins
+      </button>
+      <button data-view="account" onclick="nav('account')">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1l-.4-2.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.06-.3.1-.66.1-1z"/></svg>
+        Account
+      </button>
+    </nav>
+    <div class="side-foot">
+      <div class="who">Signed in as <b id="who-name">—</b><span id="who-role" class="role-tag hidden"></span></div>
+      <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="doLogout()">Sign out</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- TUNNELS -->
+    <section id="v-tunnels">
+      <div class="head">
+        <div>
+          <h2>Tunnels</h2>
+          <div class="desc">Forward an inbound port to a remote target, with traffic and time limits.</div>
+        </div>
+        <button class="btn btn-primary" style="width:auto" onclick="openRule()">+ New tunnel</button>
+      </div>
+
+      <div class="stats" id="stat-row"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Active &amp; configured tunnels</h3>
+          <div class="toolbar">
+            <select id="admin-filter" class="hidden" onchange="loadRules()" style="background:var(--bg-soft);border:1px solid var(--line);color:var(--txt);padding:7px 11px;border-radius:8px"></select>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th>Tunnel</th><th>Listen</th><th>Target</th>
+              <th>Traffic (up / down)</th><th>Quota</th><th>Expiry</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody id="rules-body"></tbody>
+          </table>
+        </div>
+        <div id="rules-empty" class="empty hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          <div>No tunnels yet. Create your first one to start forwarding traffic.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ADMINS -->
+    <section id="v-admins" class="hidden">
+      <div class="head">
+        <div><h2>Admins</h2><div class="desc">Sub-accounts that manage their own set of tunnels.</div></div>
+        <button class="btn btn-primary" style="width:auto" onclick="openAdmin()">+ New admin</button>
+      </div>
+      <div class="card">
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Username</th><th>Tunnels</th><th>Created</th><th></th></tr></thead>
+            <tbody id="admins-body"></tbody>
+          </table>
+        </div>
+        <div id="admins-empty" class="empty hidden">No admins yet.</div>
+      </div>
+    </section>
+
+    <!-- ACCOUNT -->
+    <section id="v-account" class="hidden">
+      <div class="head"><div><h2>Account</h2><div class="desc">Change the password for your own account.</div></div></div>
+      <div class="card" style="max-width:480px">
+        <div class="modal-body">
+          <div class="field"><label>Current password</label><input id="pw-old" type="password"></div>
+          <div class="field"><label>New password</label><input id="pw-new" type="password"><div class="hint">At least 6 characters.</div></div>
+          <div class="field"><label>Confirm new password</label><input id="pw-conf" type="password"></div>
+          <button class="btn btn-primary" onclick="changePw()">Update password</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- RULE MODAL -->
+<div id="rule-modal" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head"><h3 id="rule-title">New tunnel</h3><button class="x" onclick="closeRule()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="r-id">
+      <div class="field"><label>Name</label><input id="r-name" placeholder="e.g. germany-relay-01"></div>
+      <div class="grid2">
+        <div class="field"><label>Listen port</label><input id="r-lport" type="number" placeholder="2087"></div>
+        <div class="field"><label>Target port</label><input id="r-tport" type="number" placeholder="443"></div>
+      </div>
+      <div class="field"><label>Target IP / host</label><input id="r-tip" class="mono" placeholder="10.0.0.5"></div>
+      <div class="grid2">
+        <div class="field"><label>Data limit (GB, 0 = unlimited)</label><input id="r-limit" type="number" step="0.1" placeholder="0"></div>
+        <div class="field"><label>Reset period</label>
+          <select id="r-period"><option value="none">No reset</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Expiry date (optional)</label><input id="r-expiry" type="date"></div>
+        <div class="field" id="r-owner-wrap"><label>Assign to admin</label><select id="r-owner"></select></div>
+      </div>
+      <div class="field"><label>Note</label><input id="r-note" placeholder="Optional"></div>
+      <div class="field" style="display:flex;align-items:center;gap:9px">
+        <input id="r-active" type="checkbox" checked style="width:auto">
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)">Tunnel enabled</label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeRule()">Cancel</button>
+      <button class="btn btn-primary" style="width:auto" onclick="saveRule()">Save tunnel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN MODAL -->
+<div id="admin-modal" class="overlay hidden">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><h3>New admin</h3><button class="x" onclick="closeAdmin()">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Username</label><input id="a-user"></div>
+      <div class="field"><label>Password</label><input id="a-pass" type="password"><div class="hint">At least 6 characters. This admin manages only their own tunnels.</div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeAdmin()">Cancel</button>
+      <button class="btn btn-primary" style="width:auto" onclick="saveAdmin()">Create admin</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let ME = null;
+let POLL = null;
+
+async function api(path, method='GET', body=null){
+  const opt={method,headers:{}};
+  if(body){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
+  const res=await fetch(path,opt);
+  let data={};try{data=await res.json();}catch(e){}
+  return {ok:res.ok,status:res.status,data};
+}
+function $(id){return document.getElementById(id);}
+function toast(msg,kind=''){
+  const t=$('toast');t.textContent=msg;t.className='toast show '+kind;
+  setTimeout(()=>t.className='toast',2600);
+}
+function fmtBytes(b){
+  b=Number(b)||0;
+  const u=['B','KB','MB','GB','TB'];let i=0;
+  while(b>=1024&&i<u.length-1){b/=1024;i++;}
+  return (i===0?b:b.toFixed(b>=100?0:b>=10?1:2))+' '+u[i];
+}
+function fmtRate(bps){
+  if(!bps||bps<1)return '0 b/s';
+  const bits=bps*8;const u=['b/s','Kb/s','Mb/s','Gb/s'];let i=0;let v=bits;
+  while(v>=1000&&i<u.length-1){v/=1000;i++;}
+  return v.toFixed(v>=100?0:1)+' '+u[i];
+}
+function fmtDate(ts){return ts?new Date(ts*1000).toISOString().slice(0,10):'—';}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function doLogin(){
+  const u=$('li-user').value.trim(),p=$('li-pass').value;
+  const r=await api('/api/login','POST',{U:u,P:p});
+  if(r.ok&&r.data.success){$('li-err').textContent='';boot();}
+  else $('li-err').textContent='Invalid username or password.';
+}
+$('li-pass')&&$('li-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+async function doLogout(){await api('/api/logout','POST');location.reload();}
+
+async function changePw(){
+  const o=$('pw-old').value,n=$('pw-new').value,c=$('pw-conf').value;
+  if(n!==c){toast('New passwords do not match.','bad');return;}
+  const r=await api('/api/password','POST',{Old:o,New:n});
+  if(r.ok){toast('Password updated.','ok');$('pw-old').value=$('pw-new').value=$('pw-conf').value='';}
+  else toast(r.data.error||'Could not update password.','bad');
+}
+
+function nav(view){
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('on',b.dataset.view===view));
+  ['tunnels','admins','account'].forEach(v=>$('v-'+v).classList.toggle('hidden',v!==view));
+  if(view==='admins')loadAdmins();
+  if(view==='tunnels')loadRules();
+}
+
+async function loadStats(){
+  const r=await api('/api/stats');if(!r.ok)return;const s=r.data;
+  const cards=[
+    {k:'Active tunnels',v:s.active_rules+' <small>/ '+s.total_rules+'</small>'},
+    {k:'<span class="dot up"></span> Upload',v:fmtRate(s.total_up_bps)},
+    {k:'<span class="dot down"></span> Download',v:fmtRate(s.total_down_bps)},
+    {k:'Memory',v:'<small>'+s.mem_text+'</small>',meter:s.mem_percent,mc:'var(--accent)'},
+    {k:'CPU load',v:s.cpu_percent+'<small>%</small>',meter:s.cpu_percent,mc:s.cpu_percent>85?'var(--bad)':'var(--up)'},
+    {k:'Uptime',v:'<small>'+s.uptime_text+'</small>'},
+  ];
+  $('stat-row').innerHTML=cards.map(c=>`
+    <div class="stat"><div class="k">${c.k}</div><div class="v">${c.v}</div>
+    ${c.meter!==undefined?`<div class="meter"><span style="width:${Math.min(c.meter,100)}%;background:${c.mc}"></span></div>`:''}</div>`).join('');
+}
+
+async function loadRules(){
+  let path='/api/rules';
+  const f=$('admin-filter');
+  if(ME&&ME.role==='owner'&&f.value)path+='?admin='+encodeURIComponent(f.value);
+  const r=await api(path);if(!r.ok)return;
+  const rules=r.data.rules||[];
+  $('rules-empty').classList.toggle('hidden',rules.length>0);
+  const body=$('rules-body');
+  body.innerHTML=rules.map(rl=>{
+    const total=rl.bytes_up+rl.bytes_down;
+    let quota='<span style="color:var(--txt-faint)">unlimited</span>';
+    if(rl.limit_bytes>0){
+      const up=rl.bytes_up/rl.limit_bytes*100, dn=rl.bytes_down/rl.limit_bytes*100;
+      quota=`<div class="quota"><div class="bar"><span class="bu" style="width:${Math.min(up,100)}%"></span><span class="bd" style="width:${Math.min(dn,100-Math.min(up,100))}%"></span></div>
+        <div class="txt">${fmtBytes(total)} / ${fmtBytes(rl.limit_bytes)}</div></div>`;
+    }
+    const period=rl.period&&rl.period!=='none'?` <span style="color:var(--txt-faint);font-size:10px">· ${rl.period}</span>`:'';
+    const ownerLine=ME&&ME.role==='owner'?`<div class="owner">${esc(rl.owner)}</div>`:'';
+    return `<tr>
+      <td class="name-cell"><b>${esc(rl.name)||'tunnel #'+rl.id}</b>${period}${ownerLine}${rl.note?`<div class="owner">${esc(rl.note)}</div>`:''}</td>
+      <td><span class="port">:${rl.listen_port}</span></td>
+      <td class="target">${esc(rl.target_ip)}:${rl.target_port}</td>
+      <td><div class="traf">
+        <div class="line"><span class="lbl">up</span><span class="u">${fmtBytes(rl.bytes_up)}</span><span class="rate">${fmtRate(rl.rate_up_bps)}</span></div>
+        <div class="line"><span class="lbl">down</span><span class="d">${fmtBytes(rl.bytes_down)}</span><span class="rate">${fmtRate(rl.rate_down_bps)}</span></div>
+      </div></td>
+      <td>${quota}</td>
+      <td class="target">${fmtDate(rl.expiry_date)}</td>
+      <td><span class="badge b-${rl.status}">${rl.status}</span></td>
+      <td><div class="row-actions">
+        <button class="iconbtn" title="Edit" onclick='editRule(${JSON.stringify(rl)})'><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg></button>
+        <button class="iconbtn" title="Reset traffic" onclick="resetRule(${rl.id})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 2.3 5.6"/><path d="M4 18v-4h4"/></svg></button>
+        <button class="iconbtn danger" title="Delete" onclick="delRule(${rl.id})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function openRule(){
+  $('rule-title').textContent='New tunnel';
+  $('r-id').value='';$('r-name').value='';$('r-lport').value='';$('r-tport').value='';
+  $('r-tip').value='';$('r-limit').value='0';$('r-period').value='none';$('r-expiry').value='';
+  $('r-note').value='';$('r-active').checked=true;
+  if(ME.role==='owner')populateOwnerSelect('');
+  $('rule-modal').classList.remove('hidden');
+}
+function editRule(rl){
+  $('rule-title').textContent='Edit tunnel';
+  $('r-id').value=rl.id;$('r-name').value=rl.name;$('r-lport').value=rl.listen_port;
+  $('r-tport').value=rl.target_port;$('r-tip').value=rl.target_ip;
+  $('r-limit').value=rl.limit_bytes>0?(rl.limit_bytes/1073741824):0;
+  $('r-period').value=rl.period||'none';
+  $('r-expiry').value=rl.expiry_date?fmtDate(rl.expiry_date):'';
+  $('r-note').value=rl.note;$('r-active').checked=rl.active;
+  if(ME.role==='owner')populateOwnerSelect(rl.owner);
+  $('rule-modal').classList.remove('hidden');
+}
+function closeRule(){$('rule-modal').classList.add('hidden');}
+
+async function saveRule(){
+  const id=$('r-id').value;
+  const body={
+    name:$('r-name').value.trim(),
+    listen_port:parseInt($('r-lport').value),
+    target_ip:$('r-tip').value.trim(),
+    target_port:parseInt($('r-tport').value),
+    limit_gb:parseFloat($('r-limit').value)||0,
+    period:$('r-period').value,
+    expiry:$('r-expiry').value,
+    note:$('r-note').value.trim(),
+    active:$('r-active').checked,
+  };
+  if(ME.role==='owner')body.owner=$('r-owner').value;
+  let r;
+  if(id){body.id=parseInt(id);r=await api('/api/rules','PUT',body);}
+  else r=await api('/api/rules','POST',body);
+  if(r.ok&&r.data.success){closeRule();loadRules();loadStats();toast('Tunnel saved.','ok');}
+  else toast(r.data.error||'Could not save tunnel.','bad');
+}
+async function delRule(id){
+  if(!confirm('Delete this tunnel? Active connections will be dropped.'))return;
+  await api('/api/rules','DELETE',{id});loadRules();loadStats();toast('Tunnel deleted.');
+}
+async function resetRule(id){
+  await api('/api/rules/reset','POST',{id});loadRules();toast('Traffic counter reset.','ok');
+}
+
+async function loadAdmins(){
+  const r=await api('/api/admins');if(!r.ok)return;
+  const admins=r.data.admins||[];
+  $('admins-empty').classList.toggle('hidden',admins.length>0);
+  $('admins-body').innerHTML=admins.map(a=>`<tr>
+    <td><b>${esc(a.username)}</b></td>
+    <td class="target">${a.rule_count}</td>
+    <td class="target">${fmtDate(a.created_at)}</td>
+    <td><button class="iconbtn danger" title="Delete admin" onclick="delAdmin('${esc(a.username)}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button></td>
+  </tr>`).join('');
+  const opts='<option value="">All admins</option>'+admins.map(a=>`<option value="${esc(a.username)}">${esc(a.username)}</option>`).join('');
+  $('admin-filter').innerHTML=opts;
+}
+function populateOwnerSelect(sel){
+  api('/api/admins').then(r=>{
+    const admins=(r.data&&r.data.admins)||[];
+    const opts=`<option value="${esc(ME.username)}">${esc(ME.username)} (you)</option>`+
+      admins.map(a=>`<option value="${esc(a.username)}" ${a.username===sel?'selected':''}>${esc(a.username)}</option>`).join('');
+    $('r-owner').innerHTML=opts;
+    if(sel)$('r-owner').value=sel;
+  });
+}
+function openAdmin(){$('a-user').value='';$('a-pass').value='';$('admin-modal').classList.remove('hidden');}
+function closeAdmin(){$('admin-modal').classList.add('hidden');}
+async function saveAdmin(){
+  const r=await api('/api/admins','POST',{Username:$('a-user').value.trim(),Password:$('a-pass').value});
+  if(r.ok&&r.data.success){closeAdmin();loadAdmins();toast('Admin created.','ok');}
+  else toast(r.data.error||'Could not create admin.','bad');
+}
+async function delAdmin(u){
+  if(!confirm('Delete admin "'+u+'" and all of their tunnels?'))return;
+  await api('/api/admins','DELETE',{Username:u});loadAdmins();toast('Admin deleted.');
+}
+
+async function boot(){
+  const r=await api('/api/me');
+  if(!r.data.auth){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}
+  ME=r.data;
+  $('login').classList.add('hidden');$('app').classList.remove('hidden');
+  $('who-name').textContent=ME.username;
+  if(ME.role==='owner'){
+    $('who-role').textContent='owner';$('who-role').classList.remove('hidden');
+    $('nav-admins').classList.remove('hidden');
+    $('admin-filter').classList.remove('hidden');
+    $('r-owner-wrap').classList.remove('hidden');
+  }else{
+    $('nav-admins').classList.add('hidden');
+    $('admin-filter').classList.add('hidden');
+    $('r-owner-wrap').classList.add('hidden');
+  }
+  loadStats();loadRules();
+  if(POLL)clearInterval(POLL);
+  POLL=setInterval(()=>{
+    if($('v-tunnels').classList.contains('hidden'))return;
+    loadStats();loadRules();
+  },3000);
+}
+boot();
+</script>
+</body>
+</html>

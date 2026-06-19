@@ -1,66 +1,74 @@
 <div align="center">
-<h3>🛡️ RahGozar Panel</h3>
+<h3>🛡️ RahGozar</h3>
 <p>
-<img src="https://img.shields.io/badge/Python-3.10+-blue.svg?style=flat&logo=python" alt="Python 3.10+">
+<img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg?style=flat&logo=go" alt="Go 1.21+">
 <img src="https://img.shields.io/github/license/hoseinlolready/RahGozar?style=flat" />
 <img src="https://img.shields.io/badge/Status-Stable-orange.svg" alt="Status">
-<img src="https://img.shields.io/github/stars/hoseinlolready/RahGozar" />
-<a href="https://t.me/HOSEINLOL" target="_blank">
-    <img src="https://img.shields.io/badge/telegram-channel-blue&logo=telegram" />
+<a href="https://t.me/HOSEINLOL" target="_blank"><img src="https://img.shields.io/badge/telegram-channel-blue&logo=telegram" /></a>
 </p>
-
-<h3>High-Performance, Lightweight Port Tunneling Management System</h3>
-<p>Manage your tunnels with Data Limits, Expiry Dates, and a beautiful Dark UI.</p>
+<h3>High-Performance Port Tunneling Manager — One Binary</h3>
+<p>Panel, API, database and forwarding core in a single static executable.</p>
 </div>
 
+## Overview
 
-📖 Overview
+RahGozar forwards an inbound port to a remote target and manages those tunnels from a built-in web panel. The entire application web UI, REST API, SQLite storage, and the TCP forwarding core
 
-RahGozar is a Tunnel manager tool that
-provides a simple , free and easy-to-use user interface for managing hundreds of Tunnels powered by RahGozar Core
+## Features
 
-🚀 Why use RahGozar?
+- Built-in web panel, served by the binary itself (no separate web server).
+- **Separate upload and download accounting** per tunnel, with live throughput shown in the UI.
+- Data limits, with optional **periodic auto-reset** (daily / weekly / monthly).
+- Expiry dates per tunnel.
+- **Multi-admin**: an owner account manages everything; admin sub-accounts each manage only their own tunnels, fully isolated from one another.
+- System stats (memory, CPU load, uptime) on the dashboard.
 
-RahGozar is user-friendly, reliable and easy-to-use. It lets you to create many Tunnels for your users without any complicated configuration.
-Using its built-in web UI, you are able to monitor, modify and limit users.
-
-✨ Features
-
-- Built-in **Web UI**
-- **Traffic** and **expiry date** limitations
-- **Periodic** traffic limit (e.g. daily, weekly, etc.)
-- System monitoring and **traffic statistics**
-- Support **Multi-admin** (not multi tunnel management currently for every diffrent admins)
-
-🛠️ Installation Guide
-
-Run the following command to install RahGozar with SQLite database:
+## Install
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/installer.sh)"
 ```
 
-After installing it you can use script to add a admin user
+The installer detects your architecture, downloads the matching binary into `/opt/rahgozar`, walks you through creating the **owner** account, and starts a `systemd` service on port `9090` (override with `RAHGOZAR_PORT`).
 
-The script :
-```bash
-Rahgozar
+Open the panel at `http://<server-ip>:9090`.
+
+## Managing accounts
+
+A `rahgozar` command is installed for day-to-day management:
+
+```
+rahgozar add-admin          # create an admin account (or the owner, first run)
+rahgozar list-admins        # list accounts
+rahgozar del-admin <user>   # delete an admin and all their tunnels
+rahgozar status | logs      # service status / live logs
+rahgozar restart            # restart the service
 ```
 
-And if you see a problem or the project isnt useful for you you can just use this command to uninstall it
+The owner is the first account created and can never be deleted from the CLI. Owners can create admins from the panel as well as the command line.
+
+## Uninstall
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/uninstaller.sh)"
 ```
 
-# ❤️ Donation
+You'll be asked whether to keep or remove the database.
 
-If you found Rahgozar useful and would like to support its development, you can make a donation in one of the following crypto networks:
+## Building from source
 
-- ETH, BNB, MATIC network (ERC20, BEP20): 0x9De9b9c4AE395E59997DAA2a434a54E5e4077471
-- Bitcoin network: bc1q0atnk8l7zrjzy3wwsfdv6mvzqkdn7yssylfvws
-- TON network: UQCbzYzcaI_LMQyJ1FG3aOxm1htIgR0YFzoY7qrvvQx9WQrW
+Requires Go 1.21+, `gcc`, and (for the arm64 cross-build) `gcc-aarch64-linux-gnu`.
 
-📝 License
+```bash
+./build.sh        # produces dist/rahgozar-linux-amd64 and dist/rahgozar-linux-arm64
+```
 
-This project is open-source and available under the [MIT License](./LICENSE).
+To run locally during development:
+
+```bash
+go run . -db ./rahgozar.db -port 9090
+```
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
