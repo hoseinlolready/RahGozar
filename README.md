@@ -6,7 +6,7 @@
 <img src="https://img.shields.io/badge/Status-Stable-orange.svg" alt="Status">
 <a href="https://t.me/HOSEINLOL" target="_blank"><img src="https://img.shields.io/badge/telegram-channel-blue&logo=telegram" /></a>
 </p>
-<h3>High-Performance Port Tunneling Manager — One Binary</h3>
+<h3>High-Performance Port Tunneling Manager</h3>
 <p>Panel, API, database and forwarding core in a single static executable.</p>
 </div>
 
