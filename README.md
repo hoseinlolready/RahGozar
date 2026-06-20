@@ -95,21 +95,6 @@ The owner is the first account created and can never be deleted from the CLI. Ow
 
 Run `rahgozar`, choose **Uninstall**, and confirm. You'll be asked whether to keep or remove the database (accounts + tunnels).
 
-## ICMP and SIT (advanced, need root)
-
-`icmp` and `sit` require raw sockets / kernel tunnels, so they only run as root. Both are point-to-point between your two servers.
-
-To check the ICMP transport in isolation (no Xray involved), run the built-in test — server on the exit, client on the entry:
-
-```
-# on the exit (abroad):
-sudo ./rahgozar -icmp-server -secret mysecret
-# on the entry (Iran):
-sudo ./rahgozar -icmp-client <EXIT_IP> -secret mysecret
-```
-
-A `SUCCESS` line means ICMP works end to end. Add `RAHGOZAR_DEBUG=1` in front of either command to see per-packet detail (whether requests arrive, decrypt, and get answered). For `sit`, both ends point their target IP at each other's public IP; the private link is fixed at `10.200.200.1` (exit) and `10.200.200.2` (entry).
-
 ## Building from source
 
 Requires Go 1.21+, `gcc`, and (for the arm64 cross-build) `gcc-aarch64-linux-gnu`.
