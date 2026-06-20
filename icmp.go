@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"syscall"
@@ -114,8 +115,8 @@ func openFrame(gcm cipher.AEAD, blob []byte) (frame, bool) {
 }
 
 type packetConn interface {
-	WriteTo(payload []byte, dst [4]byte, asReply bool) error
-	ReadFrom(buf []byte) (n int, src [4]byte, wasReply bool, err error)
+	WriteTo(payload []byte, dst [4]byte, asReply bool, replyID uint16) error
+	ReadFrom(buf []byte) (n int, src [4]byte, wasReply bool, id uint16, err error)
 	Close() error
 }
 
@@ -160,43 +161,51 @@ type rawICMPConn struct {
 func newRawICMPConn() (*rawICMPConn, error) {
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
 	if err != nil {
+		log.Printf("icmp: could not open raw socket: %v (raw ICMP needs root / CAP_NET_RAW)", err)
 		return nil, err
 	}
 	var pid [2]byte
 	rand.Read(pid[:])
-	return &rawICMPConn{fd: fd, id: binary.BigEndian.Uint16(pid[:])}, nil
+	id := binary.BigEndian.Uint16(pid[:])
+	dbg("icmp: raw socket opened (fd=%d, id=%d)", fd, id)
+	return &rawICMPConn{fd: fd, id: id}, nil
 }
 
-func (c *rawICMPConn) WriteTo(payload []byte, dst [4]byte, asReply bool) error {
+func (c *rawICMPConn) WriteTo(payload []byte, dst [4]byte, asReply bool, replyID uint16) error {
 	c.seqMu.Lock()
 	c.seq++
 	seq := c.seq
 	c.seqMu.Unlock()
-	pkt := buildEcho(asReply, c.id, seq, payload)
+	id := c.id
+	if asReply {
+		id = replyID // match the entry's request id so NAT lets the reply back
+	}
+	pkt := buildEcho(asReply, id, seq, payload)
 	return syscall.Sendto(c.fd, pkt, 0, &syscall.SockaddrInet4{Addr: dst})
 }
 
-func (c *rawICMPConn) ReadFrom(buf []byte) (int, [4]byte, bool, error) {
+func (c *rawICMPConn) ReadFrom(buf []byte) (int, [4]byte, bool, uint16, error) {
 	raw := make([]byte, 65535)
 	n, from, err := syscall.Recvfrom(c.fd, raw, 0)
 	if err != nil {
-		return 0, [4]byte{}, false, err
+		return 0, [4]byte{}, false, 0, err
 	}
 	var src [4]byte
 	if sa, ok := from.(*syscall.SockaddrInet4); ok {
 		src = sa.Addr
 	}
 	if n < 20 {
-		return 0, src, false, errShortPacket
+		return 0, src, false, 0, errShortPacket
 	}
 	ihl := int(raw[0]&0x0f) * 4
 	if n < ihl+8 {
-		return 0, src, false, errShortPacket
+		return 0, src, false, 0, errShortPacket
 	}
 	icmpType := raw[ihl]
+	id := binary.BigEndian.Uint16(raw[ihl+4 : ihl+6])
 	payload := raw[ihl+8 : n]
 	m := copy(buf, payload)
-	return m, src, icmpType == 0, nil
+	return m, src, icmpType == 0, id, nil
 }
 
 func (c *rawICMPConn) Close() error { return syscall.Close(c.fd) }
@@ -253,15 +262,21 @@ func (h *icmpHub) snapshot() []*icmpEndpoint {
 func (h *icmpHub) readPump() {
 	buf := make([]byte, 65535)
 	for {
-		n, src, wasReply, err := h.pc.ReadFrom(buf)
+		n, src, wasReply, icmpID, err := h.pc.ReadFrom(buf)
 		if err != nil {
+			dbg("icmp: read error: %v", err)
 			return
 		}
 		payload := buf[:n]
+		matched := false
 		for _, ep := range h.snapshot() {
-			if ep.consume(payload, src, wasReply) {
+			if ep.consume(payload, src, wasReply, icmpID) {
+				matched = true
 				break
 			}
+		}
+		if !matched {
+			dbg("icmp: rx %d bytes from %s (reply=%v id=%d) -> no endpoint matched/decrypted", n, net.IP(src[:]).String(), wasReply, icmpID)
 		}
 	}
 }
@@ -270,16 +285,16 @@ type icmpEndpoint struct {
 	hub      *icmpHub
 	gcm      cipher.AEAD
 	isClient bool
-	peer     [4]byte // client: the exit IP
-	tag      string  // registry key
+	peer     [4]byte
+	tag      string
 
 	mu       sync.Mutex
 	sessions map[uint32]*reliableConn
-	acceptCh chan *reliableConn // server only
+	acceptCh chan *reliableConn
 	closed   bool
 }
 
-func (ep *icmpEndpoint) consume(payload []byte, src [4]byte, wasReply bool) bool {
+func (ep *icmpEndpoint) consume(payload []byte, src [4]byte, wasReply bool, icmpID uint16) bool {
 	if ep.isClient != wasReply {
 		return false
 	}
@@ -293,21 +308,24 @@ func (ep *icmpEndpoint) consume(payload []byte, src [4]byte, wasReply bool) bool
 	if !ep.isClient && fr.dir != dirC2S {
 		return false
 	}
-	ep.route(fr, src)
+	dbg("icmp: rx ok from %s session=%d type=%d seq=%d ack=%d dlen=%d", net.IP(src[:]).String(), fr.session, fr.ftype, fr.seq, fr.ack, len(fr.data))
+	ep.route(fr, src, icmpID)
 	return true
 }
 
-func (ep *icmpEndpoint) route(fr frame, src [4]byte) {
+func (ep *icmpEndpoint) route(fr frame, src [4]byte, icmpID uint16) {
 	ep.mu.Lock()
 	s := ep.sessions[fr.session]
 	if s == nil {
 		if ep.isClient || ep.closed {
 			ep.mu.Unlock()
-			return // client: unknown session; ignore
+			return
 		}
 		s = newReliableConn(ep, fr.session, src)
+		s.peerID = icmpID // reply with the id the entry used
 		ep.sessions[fr.session] = s
 		ep.mu.Unlock()
+		dbg("icmp: new inbound session %d from %s (reply id=%d)", fr.session, net.IP(src[:]).String(), icmpID)
 		select {
 		case ep.acceptCh <- s:
 		default:
@@ -317,6 +335,7 @@ func (ep *icmpEndpoint) route(fr frame, src [4]byte) {
 			return
 		}
 	} else {
+		s.peerID = icmpID
 		ep.mu.Unlock()
 	}
 	s.onFrame(fr)
@@ -331,6 +350,7 @@ func (ep *icmpEndpoint) openSession() *reliableConn {
 	ep.sessions[id] = s
 	ep.mu.Unlock()
 	s.sendControlSeq(ftSYN, nil)
+	dbg("icmp: opened outbound session %d to %s", id, net.IP(ep.peer[:]).String())
 	return s
 }
 
@@ -352,6 +372,7 @@ type reliableConn struct {
 	ep   *icmpEndpoint
 	id   uint32
 	peer [4]byte
+	peerID uint16
 
 	sndMu     sync.Mutex
 	sndCond   *sync.Cond
@@ -404,7 +425,7 @@ func (s *reliableConn) sendFrame(ftype byte, seq, ack uint32, data []byte) {
 	pc := s.ep.hub.pc
 	s.ep.hub.mu.Unlock()
 	if pc != nil {
-		pc.WriteTo(blob, s.peer, !s.ep.isClient)
+		pc.WriteTo(blob, s.peer, !s.ep.isClient, s.peerID)
 	}
 	s.lastTx = time.Now()
 }
@@ -667,6 +688,7 @@ func (h *icmpHub) serverEndpoint(key []byte) (*icmpEndpoint, error) {
 		acceptCh: make(chan *reliableConn, 128), tag: id}
 	h.endpoints = append(h.endpoints, ep)
 	h.mu.Unlock()
+	dbg("icmp: server endpoint ready (listening for echo requests)")
 	return ep, nil
 }
 

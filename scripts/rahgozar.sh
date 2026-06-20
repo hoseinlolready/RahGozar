@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+INSTALL_DIR="/usr/local/rahgozar"
+BIN="$INSTALL_DIR/rahgozar"
+DB="$INSTALL_DIR/rahgozar.db"
+PORT_FILE="$INSTALL_DIR/port"
+SERVICE_FILE="/etc/systemd/system/rahgozar.service"
+SELF_PATH="/usr/local/bin/rahgozar"
+SERVICE="rahgozar"
+
+C_RESET=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'
+C_BLUE=$'\e[38;5;39m'; C_CYAN=$'\e[38;5;43m'; C_GREEN=$'\e[38;5;42m'
+C_RED=$'\e[38;5;203m'; C_YEL=$'\e[38;5;215m'; C_GREY=$'\e[38;5;245m'
+
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+err()  { printf '%s✗%s %s\n' "$C_RED" "$C_RESET" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_YEL" "$C_RESET" "$*"; }
+ask()  { local p="$1" v; read -r -p "$(printf '%s? %s%s ' "$C_CYAN" "$C_RESET" "$p")" v; printf '%s' "$v"; }
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    err "Run this as root (use sudo)."
+    exit 1
+  fi
+}
+
+arch_bin() {
+  case "$(uname -m)" in
+    x86_64|amd64)  echo "rahgozar-linux-amd64" ;;
+    aarch64|arm64) echo "rahgozar-linux-arm64" ;;
+    *) echo "" ;;
+  esac
+}
+
+pub_ip() {
+  local ip=""
+  for u in "https://api.ipify.org" "https://ipinfo.io/ip" "https://ifconfig.me"; do
+    ip="$(curl -fsS --max-time 4 "$u" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$ip" ] && { echo "$ip"; return; }
+  done
+  echo "your-server-ip"
+}
+
+server_country() {
+  local out=""
+  out="$(curl -fsS --max-time 4 "https://ipinfo.io/json" 2>/dev/null)" || true
+  if [ -n "$out" ]; then
+    local country city
+    country="$(printf '%s' "$out" | grep -o '"country"[^,]*' | head -1 | cut -d'"' -f4)"
+    city="$(printf '%s' "$out" | grep -o '"city"[^,]*' | head -1 | cut -d'"' -f4)"
+    if [ -n "$country" ]; then
+      [ -n "$city" ] && echo "$city, $country" || echo "$country"
+      return
+    fi
+  fi
+  echo "unknown"
+}
+
+svc_active()  { systemctl is-active --quiet "$SERVICE" 2>/dev/null; }
+svc_enabled() { systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; }
+is_installed(){ [ -x "$BIN" ] && [ -f "$SERVICE_FILE" ]; }
+
+get_port() { [ -f "$PORT_FILE" ] && cat "$PORT_FILE" || echo "9090"; }
+
+header() {
+  clear 2>/dev/null || true
+  local port ip country status
+  port="$(get_port)"; ip="$(pub_ip)"; country="$(server_country)"
+  printf '%s' "$C_BLUE"
+  cat <<'EOF'
+  ╦═╗┌─┐┬ ┬╔═╗┌─┐┌─┐┌─┐┬─┐
+  ╠╦╝├─┤├─┤║ ╦│ │┌─┘├─┤├┬┘
+  ╩╚═┴ ┴┴ ┴╚═╝└─┘└─┘┴ ┴┴└─
+EOF
+  printf '%s' "$C_RESET"
+  printf '  %stunnel control%s\n\n' "$C_GREY" "$C_RESET"
+
+  if is_installed; then
+    if svc_active; then
+      printf '  status   %s● running%s\n' "$C_GREEN" "$C_RESET"
+    else
+      printf '  status   %s● stopped%s\n' "$C_RED" "$C_RESET"
+    fi
+    printf '  panel    %shttp://%s:%s%s\n' "$C_CYAN" "$ip" "$port" "$C_RESET"
+  else
+    printf '  status   %snot installed%s\n' "$C_YEL" "$C_RESET"
+  fi
+  printf '  server   %s (%s)\n' "$country" "$ip"
+  printf '  %s────────────────────────────────────────%s\n' "$C_DIM" "$C_RESET"
+}
+
+write_service() {
+  local port="$1"
+  cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=RahGozar tunnel panel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN -db $DB -port $port
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+}
+
+do_install() {
+  need_root
+  if is_installed; then
+    warn "RahGozar is already installed. Use Update to replace the binary."
+    return
+  fi
+  local b; b="$(arch_bin)"
+  if [ -z "$b" ]; then err "Unsupported CPU architecture: $(uname -m)"; return; fi
+
+  local src=""
+  for cand in "./dist/$b" "./$b" "$(dirname "$0")/dist/$b" "$(dirname "$0")/../dist/$b"; do
+    [ -f "$cand" ] && { src="$cand"; break; }
+  done
+  if [ -z "$src" ]; then
+    err "Could not find the binary '$b'. Run this script from the unpacked RahGozar folder."
+    return
+  fi
+
+  local port; port="$(ask 'Panel port [9090]:')"; port="${port:-9090}"
+
+  mkdir -p "$INSTALL_DIR"
+  install -m 0755 "$src" "$BIN"
+  echo "$port" > "$PORT_FILE"
+
+  say ""
+  say "${C_B}Create the owner account:${C_RESET}"
+  "$BIN" -db "$DB" -add-admin || { err "Owner creation failed."; return; }
+
+  write_service "$port"
+  systemctl enable --now "$SERVICE" >/dev/null 2>&1
+
+  install -m 0755 "$0" "$SELF_PATH" 2>/dev/null || cp "$0" "$SELF_PATH"
+  chmod +x "$SELF_PATH"
+
+  say ""
+  if svc_active; then
+    ok "Installed and running."
+    ok "Panel: ${C_CYAN}http://$(pub_ip):$port${C_RESET}"
+    say "${C_GREY}You can re-open this menu any time by typing:${C_RESET} ${C_B}rahgozar${C_RESET}"
+  else
+    err "Installed but the service did not start. Check: journalctl -u $SERVICE -n 50"
+  fi
+}
+
+do_uninstall() {
+  need_root
+  if ! is_installed; then warn "RahGozar is not installed."; return; fi
+  local c; c="$(ask 'Remove RahGozar? Type yes to confirm:')"
+  [ "$c" = "yes" ] || { say "Cancelled."; return; }
+
+  systemctl disable --now "$SERVICE" >/dev/null 2>&1
+  rm -f "$SERVICE_FILE"; systemctl daemon-reload
+
+  local keep; keep="$(ask 'Keep the database (accounts + tunnels)? [Y/n]:')"
+  if [ "$keep" = "n" ] || [ "$keep" = "N" ]; then
+    rm -rf "$INSTALL_DIR"
+    ok "Removed everything including the database."
+  else
+    rm -f "$BIN"
+    ok "Removed. Database kept at $DB"
+  fi
+  rm -f "$SELF_PATH"
+}
+
+do_update() {
+  need_root
+  if ! is_installed; then warn "Not installed yet — use Install."; return; fi
+  local b; b="$(arch_bin)"
+  local src=""
+  for cand in "./dist/$b" "./$b" "$(dirname "$0")/dist/$b" "$(dirname "$0")/../dist/$b"; do
+    [ -f "$cand" ] && { src="$cand"; break; }
+  done
+  if [ -z "$src" ]; then err "New binary '$b' not found next to this script."; return; fi
+  systemctl stop "$SERVICE" >/dev/null 2>&1
+  install -m 0755 "$src" "$BIN"
+  install -m 0755 "$0" "$SELF_PATH" 2>/dev/null || true
+  systemctl start "$SERVICE" >/dev/null 2>&1
+  svc_active && ok "Updated and restarted." || err "Updated but service did not start."
+}
+
+do_add_admin()  { need_root; is_installed && "$BIN" -db "$DB" -add-admin || warn "Not installed."; }
+do_del_admin()  {
+  need_root; is_installed || { warn "Not installed."; return; }
+  "$BIN" -db "$DB" -list-admins
+  local u; u="$(ask 'Username to delete:')"
+  [ -n "$u" ] && "$BIN" -db "$DB" -del-admin "$u"
+}
+do_list_admins(){ need_root; is_installed && "$BIN" -db "$DB" -list-admins || warn "Not installed."; }
+
+do_restart() { need_root; systemctl restart "$SERVICE" && ok "Restarted." || err "Restart failed."; }
+do_start()   { need_root; systemctl start "$SERVICE" && ok "Started." || err "Start failed."; }
+do_stop()    { need_root; systemctl stop "$SERVICE" && ok "Stopped." || err "Stop failed."; }
+
+do_status() {
+  systemctl status "$SERVICE" --no-pager -l 2>&1 | head -20 || warn "No service."
+}
+
+do_logs() {
+  say "${C_GREY}Showing live logs — press Ctrl-C to return.${C_RESET}"
+  journalctl -u "$SERVICE" -n 60 -f 2>/dev/null || warn "No logs available."
+}
+
+do_debugging() {
+  need_root
+  if ! is_installed; then warn "Not installed."; return; fi
+  case "${1:-}" in
+    true|on|1)  "$BIN" -db "$DB" -debug on  && ok "Debug logging ON. Watch it with: rahgozar logs" ;;
+    false|off|0) "$BIN" -db "$DB" -debug off && ok "Debug logging OFF." ;;
+    *) say "usage: rahgozar debugging true|false" ;;
+  esac
+}
+
+pause() { read -r -p "$(printf '\n%spress enter to continue%s' "$C_DIM" "$C_RESET")" _; }
+
+menu() {
+  while true; do
+    header
+    cat <<EOF
+  ${C_B}1${C_RESET}  Install
+  ${C_B}2${C_RESET}  Uninstall
+  ${C_B}3${C_RESET}  Update
+  ${C_B}4${C_RESET}  Add admin
+  ${C_B}5${C_RESET}  Delete admin
+  ${C_B}6${C_RESET}  List admins
+  ${C_B}7${C_RESET}  Restart
+  ${C_B}8${C_RESET}  Start / Stop
+  ${C_B}9${C_RESET}  Status
+  ${C_B}10${C_RESET} Logs
+  ${C_B}0${C_RESET}  Exit
+EOF
+    local ch; ch="$(ask 'choose:')"
+    case "$ch" in
+      1) do_install; pause ;;
+      2) do_uninstall; pause ;;
+      3) do_update; pause ;;
+      4) do_add_admin; pause ;;
+      5) do_del_admin; pause ;;
+      6) do_list_admins; pause ;;
+      7) do_restart; pause ;;
+      8)
+         if svc_active; then do_stop; else do_start; fi; pause ;;
+      9) do_status; pause ;;
+      10) do_logs ;;
+      0|q|Q) exit 0 ;;
+      *) warn "Unknown choice." ; sleep 1 ;;
+    esac
+  done
+}
+
+# Allow direct subcommands too: rahgozar install|status|restart|logs|...
+case "${1:-}" in
+  install)   do_install ;;
+  uninstall) do_uninstall ;;
+  update)    do_update ;;
+  restart)   do_restart ;;
+  start)     do_start ;;
+  stop)      do_stop ;;
+  status)    do_status ;;
+  logs)      do_logs ;;
+  add-admin) do_add_admin ;;
+  del-admin) do_del_admin ;;
+  debugging) do_debugging "${2:-}" ;;
+  ""|menu)   menu ;;
+  *) say "usage: rahgozar [install|uninstall|update|restart|start|stop|status|logs|add-admin|del-admin]" ;;
+esac

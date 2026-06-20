@@ -63,35 +63,52 @@ Both servers run the same binary and panel. On the exit you add a `server` tunne
 
 ## Install
 
+Unpack the release, then from inside the folder run the management script:
+
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/installer.sh)"
+sudo bash scripts/rahgozar.sh
 ```
 
-The installer detects your architecture, downloads the matching binary into `/opt/rahgozar`, walks you through creating the **owner** account, and starts a `systemd` service on port `9090` (override with `RAHGOZAR_PORT`).
+This opens an interactive menu. Choose **Install** — it detects your CPU architecture, copies the matching binary into `/usr/local/rahgozar`, walks you through creating the **owner** account, starts a `systemd` service, and installs a `rahgozar` command so you can re-open the menu any time by typing:
 
-Open the panel at `http://<server-ip>:9090`.
+```bash
+rahgozar
+```
 
-## Managing accounts
+The menu header shows the panel link, the server's location, and whether the service is running. Open the panel at the link shown (`http://<server-ip>:<port>`).
 
-A `rahgozar` command is installed for day-to-day management:
+## Managing it
+
+Typing `rahgozar` opens the menu, with options for Install, Uninstall, Update, Add admin, Delete admin, List admins, Restart, Start/Stop, Status, and Logs. The same actions are available as direct subcommands:
 
 ```
-rahgozar add-admin          # create an admin account (or the owner, first run)
-rahgozar list-admins        # list accounts
-rahgozar del-admin <user>   # delete an admin and all their tunnels
+rahgozar add-admin          # create an admin (or the owner, first run)
+rahgozar del-admin          # pick an admin to delete
 rahgozar status | logs      # service status / live logs
 rahgozar restart            # restart the service
+rahgozar update             # replace the binary with a newer build, then restart
 ```
 
-The owner is the first account created and can never be deleted from the CLI. Owners can create admins from the panel as well as the command line.
+The owner is the first account created and can never be deleted from the CLI. Owners can also create and manage admins from the panel.
 
 ## Uninstall
 
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/uninstaller.sh)"
+Run `rahgozar`, choose **Uninstall**, and confirm. You'll be asked whether to keep or remove the database (accounts + tunnels).
+
+## ICMP and SIT (advanced, need root)
+
+`icmp` and `sit` require raw sockets / kernel tunnels, so they only run as root. Both are point-to-point between your two servers.
+
+To check the ICMP transport in isolation (no Xray involved), run the built-in test — server on the exit, client on the entry:
+
+```
+# on the exit (abroad):
+sudo ./rahgozar -icmp-server -secret mysecret
+# on the entry (Iran):
+sudo ./rahgozar -icmp-client <EXIT_IP> -secret mysecret
 ```
 
-You'll be asked whether to keep or remove the database.
+A `SUCCESS` line means ICMP works end to end. Add `RAHGOZAR_DEBUG=1` in front of either command to see per-packet detail (whether requests arrive, decrypt, and get answered). For `sit`, both ends point their target IP at each other's public IP; the private link is fixed at `10.200.200.1` (exit) and `10.200.200.2` (entry).
 
 ## Building from source
 

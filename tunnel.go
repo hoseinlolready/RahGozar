@@ -81,6 +81,15 @@ func (m *Manager) Run() {
 
 func (m *Manager) sync() error {
 	nowTs := now()
+	wantDebug := getSetting(m.db, "debug", "off") == "on"
+	if wantDebug != debugFlag.Load() && !debugForced {
+		if wantDebug {
+			log.Printf("debug logging enabled")
+		} else {
+			log.Printf("debug logging disabled")
+		}
+	}
+	setDebugFlag(wantDebug)
 	ratio := getUsageRatio(m.db)
 	suspended := suspendedOwners(m.db, ratio)
 
