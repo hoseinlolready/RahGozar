@@ -80,6 +80,10 @@ func (m *Manager) Run() {
 }
 
 func (m *Manager) sync() error {
+	nowTs := now()
+	ratio := getUsageRatio(m.db)
+	suspended := suspendedOwners(m.db, ratio)
+
 	rows, err := m.db.Query(`SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port,
 		limit_bytes, bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
 		FROM rules WHERE active = 1`)
@@ -88,7 +92,6 @@ func (m *Manager) sync() error {
 	}
 	defer rows.Close()
 
-	nowTs := now()
 	wanted := make(map[int64]Rule)
 
 	for rows.Next() {
@@ -102,7 +105,10 @@ func (m *Manager) sync() error {
 			continue
 		}
 
-		if r.LimitBytes > 0 && (r.BytesUp+r.BytesDown) >= r.LimitBytes {
+		if suspended[r.Owner] {
+			continue // owner account is suspended (expired or over their quota)
+		}
+		if r.LimitBytes > 0 && int64(float64(r.BytesUp+r.BytesDown)*ratio) >= r.LimitBytes {
 			continue // over quota, do not run
 		}
 		if r.ExpiryDate > 0 && nowTs > r.ExpiryDate {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,7 @@ func (s *Server) routes() *http.ServeMux {
 	}))
 	mux.HandleFunc("/api/admins", s.requireAuth(s.handleAdmins))
 	mux.HandleFunc("/api/stats", s.requireAuth(s.handleStats))
+	mux.HandleFunc("/api/settings", s.requireAuth(s.handleSettings))
 	return mux
 }
 
@@ -86,7 +88,56 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"auth": false})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"auth": true, "username": u.Username, "role": u.Role})
+	ratio := getUsageRatio(s.db)
+	susp := adminSuspended(s.db, u.Username, u.Role, ratio)
+	writeJSON(w, 200, map[string]any{
+		"auth":      true,
+		"username":  u.Username,
+		"role":      u.Role,
+		"suspended": susp.Suspended,
+		"reason":    susp.Reason,
+		"contact":   getAdminContact(s.db),
+	})
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request, u *User) {
+	switch r.Method {
+	case http.MethodGet:
+		// any signed-in user may read the contact (needed for the suspended screen)
+		out := map[string]any{
+			"admin_contact": getAdminContact(s.db),
+		}
+		if u.Role == "owner" {
+			out["usage_ratio"] = getUsageRatio(s.db)
+		}
+		writeJSON(w, 200, out)
+	case http.MethodPost:
+		if u.Role != "owner" {
+			writeJSON(w, 403, map[string]any{"error": "owner only"})
+			return
+		}
+		var body struct {
+			UsageRatio   *float64 `json:"usage_ratio"`
+			AdminContact *string  `json:"admin_contact"`
+		}
+		if err := readJSON(r, &body); err != nil {
+			writeJSON(w, 400, map[string]any{"error": "bad request"})
+			return
+		}
+		if body.UsageRatio != nil {
+			if *body.UsageRatio <= 0 {
+				writeJSON(w, 400, map[string]any{"error": "usage ratio must be greater than 0"})
+				return
+			}
+			setSetting(s.db, "usage_ratio", strconv.FormatFloat(*body.UsageRatio, 'f', -1, 64))
+		}
+		if body.AdminContact != nil {
+			setSetting(s.db, "admin_contact", *body.AdminContact)
+		}
+		writeJSON(w, 200, map[string]any{"success": true})
+	default:
+		writeJSON(w, 405, nil)
+	}
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +217,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 	var rows *sql.Rows
 	var err error
 	filterOwner := r.URL.Query().Get("admin")
+	ratio := getUsageRatio(s.db)
 
 	q := `SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes,
 		bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
@@ -198,6 +250,9 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 			continue
 		}
 		rl.Active = active == 1
+		// scale the counters by the usage ratio for both display and limits
+		rl.BytesUp = int64(float64(rl.BytesUp) * ratio)
+		rl.BytesDown = int64(float64(rl.BytesDown) * ratio)
 		rl.Status = computeStatus(rl, nowTs)
 		rl.RateUpBps, rl.RateDownBps = s.mgr.Rate(rl.ID)
 		rules = append(rules, rl)
@@ -483,8 +538,11 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := s.db.Query(`SELECT u.username, u.role, u.created_at,
-			(SELECT COUNT(*) FROM rules WHERE owner = u.username) as rule_count
+		ratio := getUsageRatio(s.db)
+		nowTs := now()
+		rows, err := s.db.Query(`SELECT u.username, u.role, u.created_at, u.limit_bytes, u.expiry_date,
+			(SELECT COUNT(*) FROM rules WHERE owner = u.username) as rule_count,
+			COALESCE((SELECT SUM(bytes_up + bytes_down) FROM rules WHERE owner = u.username), 0) as used
 			FROM users u WHERE u.role != 'owner' ORDER BY u.created_at DESC`)
 		if err != nil {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
@@ -492,30 +550,80 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 		}
 		defer rows.Close()
 		type adminRow struct {
-			Username  string `json:"username"`
-			Role      string `json:"role"`
-			CreatedAt int64  `json:"created_at"`
-			RuleCount int    `json:"rule_count"`
+			Username   string `json:"username"`
+			Role       string `json:"role"`
+			CreatedAt  int64  `json:"created_at"`
+			LimitBytes int64  `json:"limit_bytes"`
+			ExpiryDate int64  `json:"expiry_date"`
+			RuleCount  int    `json:"rule_count"`
+			UsedBytes  int64  `json:"used_bytes"`
+			Status     string `json:"status"`
 		}
 		out := []adminRow{}
 		for rows.Next() {
 			var a adminRow
-			rows.Scan(&a.Username, &a.Role, &a.CreatedAt, &a.RuleCount)
+			var rawUsed int64
+			rows.Scan(&a.Username, &a.Role, &a.CreatedAt, &a.LimitBytes, &a.ExpiryDate, &a.RuleCount, &rawUsed)
+			a.UsedBytes = int64(float64(rawUsed) * ratio)
+			a.Status = "active"
+			if a.ExpiryDate > 0 && nowTs > a.ExpiryDate {
+				a.Status = "expired"
+			} else if a.LimitBytes > 0 && a.UsedBytes >= a.LimitBytes {
+				a.Status = "limited"
+			}
 			out = append(out, a)
 		}
 		writeJSON(w, 200, map[string]any{"admins": out})
 
 	case http.MethodPost:
-		var body struct{ Username, Password string }
+		var body struct {
+			Username string  `json:"username"`
+			Password string  `json:"password"`
+			LimitGB  float64 `json:"limit_gb"`
+			Expiry   string  `json:"expiry"`
+		}
 		if err := readJSON(r, &body); err != nil || body.Username == "" || len(body.Password) < 6 {
 			writeJSON(w, 400, map[string]any{"error": "username and a password of 6+ characters are required"})
 			return
 		}
-		_, err := s.db.Exec("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, 'admin', ?)",
-			body.Username, hashPassword(body.Password), now())
+		expiry, err := parseExpiry(body.Expiry)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": "invalid expiry date"})
+			return
+		}
+		_, err = s.db.Exec("INSERT INTO users (username, password_hash, role, limit_bytes, expiry_date, created_at) VALUES (?, ?, 'admin', ?, ?, ?)",
+			body.Username, hashPassword(body.Password), int64(body.LimitGB*1073741824), expiry, now())
 		if err != nil {
 			writeJSON(w, 409, map[string]any{"error": "that username is already taken"})
 			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true})
+
+	case http.MethodPut:
+		var body struct {
+			Username string  `json:"username"`
+			Password string  `json:"password"` // optional: blank = unchanged
+			LimitGB  float64 `json:"limit_gb"`
+			Expiry   string  `json:"expiry"`
+		}
+		if err := readJSON(r, &body); err != nil || body.Username == "" {
+			writeJSON(w, 400, map[string]any{"error": "bad request"})
+			return
+		}
+		var role string
+		if err := s.db.QueryRow("SELECT role FROM users WHERE username = ?", body.Username).Scan(&role); err != nil || role == "owner" {
+			writeJSON(w, 404, map[string]any{"error": "admin not found"})
+			return
+		}
+		expiry, err := parseExpiry(body.Expiry)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": "invalid expiry date"})
+			return
+		}
+		s.db.Exec("UPDATE users SET limit_bytes = ?, expiry_date = ? WHERE username = ?",
+			int64(body.LimitGB*1073741824), expiry, body.Username)
+		if len(body.Password) >= 6 {
+			s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", hashPassword(body.Password), body.Username)
 		}
 		writeJSON(w, 200, map[string]any{"success": true})
 

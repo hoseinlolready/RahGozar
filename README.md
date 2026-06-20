@@ -23,6 +23,9 @@ RahGozar forwards traffic between servers and manages those tunnels from a built
 - Data limits, with optional **periodic auto-reset** (daily / weekly / monthly).
 - Expiry dates per tunnel.
 - **Multi-admin**: an owner account manages everything; admin sub-accounts each manage only their own tunnels, fully isolated from one another.
+- **Per-admin limits**: each admin can have a total traffic quota and an expiry date. When an admin is over quota or expired, their tunnels stop and they see an "account suspended" screen with a contact link.
+- **Usage ratio**: an owner-set multiplier applied to all measured traffic (e.g. 1.5 counts every 1 GB as 1.5 GB) for both limits and the panel.
+- **Light and dark themes** (dark is the default).
 - System stats (memory, CPU load, uptime) on the dashboard.
 - Builds for `linux/amd64` and `linux/arm64`.
 

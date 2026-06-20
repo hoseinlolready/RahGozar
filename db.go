@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'admin',
+    limit_bytes   INTEGER NOT NULL DEFAULT 0,
+    expiry_date   INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL
 );
 
@@ -19,6 +21,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
     username   TEXT NOT NULL,
     created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rules (
@@ -47,13 +54,20 @@ CREATE INDEX IF NOT EXISTS idx_rules_owner ON rules(owner);
 `
 
 func migrate(db *sql.DB) {
-	cols := map[string]string{
+	addCols(db, "rules", map[string]string{
 		"role":   "TEXT NOT NULL DEFAULT 'local'",
 		"mode":   "TEXT NOT NULL DEFAULT 'tcp'",
 		"secret": "TEXT NOT NULL DEFAULT ''",
 		"host":   "TEXT NOT NULL DEFAULT ''",
-	}
-	rows, err := db.Query("PRAGMA table_info(rules)")
+	})
+	addCols(db, "users", map[string]string{
+		"limit_bytes": "INTEGER NOT NULL DEFAULT 0",
+		"expiry_date": "INTEGER NOT NULL DEFAULT 0",
+	})
+}
+
+func addCols(db *sql.DB, table string, cols map[string]string) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		return
 	}
@@ -69,7 +83,7 @@ func migrate(db *sql.DB) {
 	rows.Close()
 	for col, def := range cols {
 		if !have[col] {
-			db.Exec("ALTER TABLE rules ADD COLUMN " + col + " " + def)
+			db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + def)
 		}
 	}
 }

@@ -31,6 +31,24 @@
     --r:4px;
     --r-sm:3px;
   }
+  body.light{
+    --bg:#eef1f7;
+    --bg-soft:#ffffff;
+    --panel:#ffffff;
+    --panel-2:#f4f6fb;
+    --line:#dde3ee;
+    --line-soft:#e9edf5;
+    --txt:#16203a;
+    --txt-dim:#5a667b;
+    --txt-faint:#94a0b4;
+    --up:#0d9488;
+    --down:#c2691a;
+    --accent:#2563eb;
+    --accent-2:#1d4ed8;
+    --ok:#0d9488;
+    --warn:#b45309;
+    --bad:#dc2626;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
@@ -45,6 +63,14 @@
       radial-gradient(760px 520px at -10% 108%, rgba(47,215,200,.05), transparent 55%);
   }
   a{color:inherit}
+  body.light{
+    background-image:
+      radial-gradient(1000px 520px at 100% -8%, rgba(37,99,235,.07), transparent 60%),
+      radial-gradient(760px 520px at -10% 108%, rgba(13,148,136,.05), transparent 55%);
+  }
+  body.light .login-card{box-shadow:0 18px 50px rgba(40,60,100,.12)}
+  body.light .modal{box-shadow:0 24px 70px rgba(40,60,100,.18)}
+  .theme-btn.on-theme{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,.10)}
   button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
   input,select{font-family:inherit;font-size:14px}
   .mono{font-family:var(--mono)}
@@ -223,9 +249,9 @@
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
         Admins
       </button>
-      <button data-view="account" onclick="nav('account')">
+      <button data-view="settings" onclick="nav('settings')">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1l-.4-2.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.06-.3.1-.66.1-1z"/></svg>
-        Account
+        Settings
       </button>
     </nav>
     <div class="side-foot">
@@ -279,7 +305,7 @@
       <div class="card">
         <div class="table-scroll">
           <table>
-            <thead><tr><th>Username</th><th>Tunnels</th><th>Created</th><th></th></tr></thead>
+            <thead><tr><th>Username</th><th>Tunnels</th><th>Usage</th><th>Expiry</th><th>Status</th><th>Created</th><th></th></tr></thead>
             <tbody id="admins-body"></tbody>
           </table>
         </div>
@@ -287,19 +313,61 @@
       </div>
     </section>
 
-    <!-- ACCOUNT -->
-    <section id="v-account" class="hidden">
-      <div class="head"><div><h2>Account</h2><div class="desc">Change the password for your own account.</div></div></div>
-      <div class="card" style="max-width:480px">
+    <!-- SETTINGS -->
+    <section id="v-settings" class="hidden">
+      <div class="head"><div><h2>Settings</h2><div class="desc">Appearance, your account, and panel-wide options.</div></div></div>
+
+      <div class="card" style="max-width:560px;margin-bottom:16px">
+        <div class="card-head"><h3>Appearance</h3></div>
+        <div class="modal-body">
+          <div class="field" style="margin:0"><label>Theme</label>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost btn-sm theme-btn" data-theme="dark" onclick="setTheme('dark')">Dark</button>
+              <button class="btn btn-ghost btn-sm theme-btn" data-theme="light" onclick="setTheme('light')">White</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="max-width:560px;margin-bottom:16px">
+        <div class="card-head"><h3>Account password</h3></div>
         <div class="modal-body">
           <div class="field"><label>Current password</label><input id="pw-old" type="password"></div>
           <div class="field"><label>New password</label><input id="pw-new" type="password"><div class="hint">At least 6 characters.</div></div>
           <div class="field"><label>Confirm new password</label><input id="pw-conf" type="password"></div>
-          <button class="btn btn-primary" onclick="changePw()">Update password</button>
+          <button class="btn btn-primary" style="width:auto" onclick="changePw()">Update password</button>
+        </div>
+      </div>
+
+      <div class="card hidden" id="owner-settings" style="max-width:560px">
+        <div class="card-head"><h3>Panel options <span style="font-size:11px;color:var(--txt-faint);text-transform:none;letter-spacing:0">owner only</span></h3></div>
+        <div class="modal-body">
+          <div class="field"><label>Usage ratio</label>
+            <input id="set-ratio" type="number" step="0.1" min="0.1" placeholder="1.0">
+            <div class="hint">Multiplies all measured traffic. e.g. 1.5 counts every 1&nbsp;GB as 1.5&nbsp;GB toward limits and in the panel.</div>
+          </div>
+          <div class="field"><label>Admin contact link</label>
+            <input id="set-contact" class="mono" placeholder="https://t.me/youradmin">
+            <div class="hint">Shown to suspended admins so they know who to contact.</div>
+          </div>
+          <button class="btn btn-primary" style="width:auto" onclick="saveSettings()">Save options</button>
         </div>
       </div>
     </section>
   </main>
+</div>
+
+<!-- SUSPENDED SCREEN -->
+<div id="suspended" class="login-wrap hidden">
+  <div class="login-card" style="text-align:center">
+    <div style="width:46px;height:46px;border-radius:10px;background:rgba(248,113,113,.14);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--bad)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>
+    </div>
+    <h1 style="font-size:19px;margin-bottom:8px">Account suspended</h1>
+    <p class="lead" id="susp-reason" style="margin-bottom:18px">Your account has been suspended. Please contact your admin.</p>
+    <a id="susp-contact" href="#" target="_blank" class="btn btn-primary hidden" style="text-decoration:none;margin-bottom:10px">Contact admin</a>
+    <button class="btn btn-ghost btn-sm" style="width:100%" onclick="doLogout()">Sign out</button>
+  </div>
 </div>
 
 <!-- RULE MODAL -->
@@ -374,15 +442,20 @@
 
 <!-- ADMIN MODAL -->
 <div id="admin-modal" class="overlay hidden">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-head"><h3>New admin</h3><button class="x" onclick="closeAdmin()">✕</button></div>
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head"><h3 id="admin-title">New admin</h3><button class="x" onclick="closeAdmin()">✕</button></div>
     <div class="modal-body">
+      <input type="hidden" id="a-edit">
       <div class="field"><label>Username</label><input id="a-user"></div>
-      <div class="field"><label>Password</label><input id="a-pass" type="password"><div class="hint">At least 6 characters. This admin manages only their own tunnels.</div></div>
+      <div class="field"><label id="a-pass-lbl">Password</label><input id="a-pass" type="password"><div class="hint" id="a-pass-hint">At least 6 characters. This admin manages only their own tunnels.</div></div>
+      <div class="grid2">
+        <div class="field"><label>Traffic limit (GB, 0 = unlimited)</label><input id="a-limit" type="number" step="0.1" placeholder="0"></div>
+        <div class="field"><label>Expiry date (optional)</label><input id="a-expiry" type="date"></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeAdmin()">Cancel</button>
-      <button class="btn btn-primary" style="width:auto" onclick="saveAdmin()">Create admin</button>
+      <button class="btn btn-primary" style="width:auto" id="a-save" onclick="saveAdmin()">Create admin</button>
     </div>
   </div>
 </div>
@@ -439,9 +512,37 @@ async function changePw(){
 
 function nav(view){
   document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('on',b.dataset.view===view));
-  ['tunnels','admins','account'].forEach(v=>$('v-'+v).classList.toggle('hidden',v!==view));
+  ['tunnels','admins','settings'].forEach(v=>$('v-'+v).classList.toggle('hidden',v!==view));
   if(view==='admins')loadAdmins();
   if(view==='tunnels')loadRules();
+  if(view==='settings')loadSettings();
+}
+
+function setTheme(t){
+  document.body.classList.toggle('light', t==='light');
+  try{ localStorage.setItem('rg-theme', t); }catch(e){}
+  document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on-theme', b.dataset.theme===t));
+}
+function initTheme(){
+  let t='dark';
+  try{ t=localStorage.getItem('rg-theme')||'dark'; }catch(e){}
+  setTheme(t);
+}
+
+async function loadSettings(){
+  const r=await api('/api/settings');
+  if(r.ok){
+    if(r.data.usage_ratio!==undefined && $('set-ratio')) $('set-ratio').value=r.data.usage_ratio;
+    if($('set-contact')) $('set-contact').value=r.data.admin_contact||'';
+  }
+  document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on-theme', b.dataset.theme===(document.body.classList.contains('light')?'light':'dark')));
+}
+async function saveSettings(){
+  const ratio=parseFloat($('set-ratio').value)||1;
+  const contact=$('set-contact').value.trim();
+  const r=await api('/api/settings','POST',{usage_ratio:ratio,admin_contact:contact});
+  if(r.ok&&r.data.success){toast('Settings saved.','ok');loadRules&&loadRules();}
+  else toast(r.data.error||'Could not save settings.','bad');
 }
 
 async function loadStats(){
@@ -616,12 +717,28 @@ async function loadAdmins(){
   const r=await api('/api/admins');if(!r.ok)return;
   const admins=r.data.admins||[];
   $('admins-empty').classList.toggle('hidden',admins.length>0);
-  $('admins-body').innerHTML=admins.map(a=>`<tr>
-    <td><b>${esc(a.username)}</b></td>
-    <td class="target">${a.rule_count}</td>
-    <td class="target">${fmtDate(a.created_at)}</td>
-    <td><button class="iconbtn danger" title="Delete admin" onclick="delAdmin('${esc(a.username)}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button></td>
-  </tr>`).join('');
+  $('admins-body').innerHTML=admins.map(a=>{
+    let usage='<span style="color:var(--txt-faint)">unlimited</span>';
+    if(a.limit_bytes>0){
+      const pct=Math.min(a.used_bytes/a.limit_bytes*100,100);
+      const col=a.status==='limited'?'var(--bad)':'var(--up)';
+      usage=`<div class="quota"><div class="bar"><span style="width:${pct}%;background:${col}"></span></div><div class="txt">${fmtBytes(a.used_bytes)} / ${fmtBytes(a.limit_bytes)}</div></div>`;
+    }else{
+      usage=`<span class="target">${fmtBytes(a.used_bytes)} used</span>`;
+    }
+    return `<tr>
+      <td><b>${esc(a.username)}</b></td>
+      <td class="target">${a.rule_count}</td>
+      <td>${usage}</td>
+      <td class="target">${fmtDate(a.expiry_date)}</td>
+      <td><span class="badge b-${a.status}">${a.status}</span></td>
+      <td class="target">${fmtDate(a.created_at)}</td>
+      <td><div class="row-actions">
+        <button class="iconbtn" title="Edit" onclick='editAdmin(${JSON.stringify(a)})'><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg></button>
+        <button class="iconbtn danger" title="Delete admin" onclick="delAdmin('${esc(a.username)}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>
+      </div></td>
+    </tr>`;
+  }).join('');
   const opts='<option value="">All admins</option>'+admins.map(a=>`<option value="${esc(a.username)}">${esc(a.username)}</option>`).join('');
   $('admin-filter').innerHTML=opts;
 }
@@ -634,12 +751,31 @@ function populateOwnerSelect(sel){
     if(sel)$('r-owner').value=sel;
   });
 }
-function openAdmin(){$('a-user').value='';$('a-pass').value='';$('admin-modal').classList.remove('hidden');}
+function openAdmin(){
+  $('admin-title').textContent='New admin';
+  $('a-edit').value='';$('a-user').value='';$('a-user').disabled=false;$('a-pass').value='';
+  $('a-limit').value='0';$('a-expiry').value='';
+  $('a-pass-lbl').textContent='Password';$('a-pass-hint').textContent='At least 6 characters. This admin manages only their own tunnels.';
+  $('a-save').textContent='Create admin';
+  $('admin-modal').classList.remove('hidden');
+}
+function editAdmin(a){
+  $('admin-title').textContent='Edit admin';
+  $('a-edit').value=a.username;$('a-user').value=a.username;$('a-user').disabled=true;$('a-pass').value='';
+  $('a-limit').value=a.limit_bytes>0?(a.limit_bytes/1073741824):0;
+  $('a-expiry').value=a.expiry_date?fmtDate(a.expiry_date):'';
+  $('a-pass-lbl').textContent='New password (optional)';$('a-pass-hint').textContent='Leave blank to keep the current password.';
+  $('a-save').textContent='Save changes';
+  $('admin-modal').classList.remove('hidden');
+}
 function closeAdmin(){$('admin-modal').classList.add('hidden');}
 async function saveAdmin(){
-  const r=await api('/api/admins','POST',{Username:$('a-user').value.trim(),Password:$('a-pass').value});
-  if(r.ok&&r.data.success){closeAdmin();loadAdmins();toast('Admin created.','ok');}
-  else toast(r.data.error||'Could not create admin.','bad');
+  const editing=$('a-edit').value;
+  const body={username:$('a-user').value.trim(),password:$('a-pass').value,
+    limit_gb:parseFloat($('a-limit').value)||0,expiry:$('a-expiry').value};
+  const r=await api('/api/admins',editing?'PUT':'POST',body);
+  if(r.ok&&r.data.success){closeAdmin();loadAdmins();toast(editing?'Admin updated.':'Admin created.','ok');}
+  else toast(r.data.error||'Could not save admin.','bad');
 }
 async function delAdmin(u){
   if(!confirm('Delete admin "'+u+'" and all of their tunnels?'))return;
@@ -648,19 +784,39 @@ async function delAdmin(u){
 
 async function boot(){
   const r=await api('/api/me');
-  if(!r.data.auth){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}
+  if(!r.data.auth){$('login').classList.remove('hidden');$('app').classList.add('hidden');$('suspended').classList.add('hidden');return;}
   ME=r.data;
-  $('login').classList.add('hidden');$('app').classList.remove('hidden');
+
+  // suspended (non-owner) accounts only see the suspended screen
+  if(ME.suspended){
+    $('login').classList.add('hidden');$('app').classList.add('hidden');
+    $('suspended').classList.remove('hidden');
+    const reason = ME.reason==='expired'
+      ? 'Your account has expired. Please contact your admin to renew it.'
+      : 'Your account reached its traffic limit. Please contact your admin.';
+    $('susp-reason').textContent=reason;
+    if(ME.contact){
+      const c=$('susp-contact');
+      c.href=/^https?:\/\//i.test(ME.contact)?ME.contact:('https://'+ME.contact);
+      c.classList.remove('hidden');
+    }
+    if(POLL)clearInterval(POLL);
+    return;
+  }
+
+  $('login').classList.add('hidden');$('suspended').classList.add('hidden');$('app').classList.remove('hidden');
   $('who-name').textContent=ME.username;
   if(ME.role==='owner'){
     $('who-role').textContent='owner';$('who-role').classList.remove('hidden');
     $('nav-admins').classList.remove('hidden');
     $('admin-filter').classList.remove('hidden');
     $('r-owner-wrap').classList.remove('hidden');
+    $('owner-settings').classList.remove('hidden');
   }else{
     $('nav-admins').classList.add('hidden');
     $('admin-filter').classList.add('hidden');
     $('r-owner-wrap').classList.add('hidden');
+    $('owner-settings').classList.add('hidden');
   }
   loadStats();loadRules();
   if(POLL)clearInterval(POLL);
@@ -669,6 +825,7 @@ async function boot(){
     loadStats();loadRules();
   },3000);
 }
+initTheme();
 boot();
 </script>
 </body>
