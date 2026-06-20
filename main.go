@@ -26,39 +26,8 @@ func main() {
 		addAdm = flag.Bool("add-admin", false, "interactively create an admin/owner account, then exit")
 		listAd = flag.Bool("list-admins", false, "list accounts, then exit")
 		delAdm = flag.String("del-admin", "", "delete the named admin account, then exit")
-		icmpSrv = flag.Bool("icmp-server", false, "run a standalone ICMP echo server to test the ICMP transport (needs root)")
-		icmpCli = flag.String("icmp-client", "", "ICMP ping test: dial this exit IP, send a probe, measure round-trip (needs root)")
-		secret  = flag.String("secret", "", "shared secret for -icmp-server / -icmp-client")
-		setDbg  = flag.String("debug", "", "turn debug logging on/off for the running service (on|off), then exit")
 	)
 	flag.Parse()
-
-	switch {
-	case *icmpSrv:
-		icmpEchoServer(*secret)
-		return
-	case *icmpCli != "":
-		icmpPingClient(*icmpCli, *secret)
-		return
-	}
-
-	if *setDbg != "" {
-		d, err := openDB(*dbPath)
-		if err != nil {
-			log.Fatalf("open db: %v", err)
-		}
-		on := *setDbg == "on" || *setDbg == "true" || *setDbg == "1"
-		val := "off"
-		if on {
-			val = "on"
-		}
-		if err := setSetting(d, "debug", val); err != nil {
-			log.Fatalf("could not set debug: %v", err)
-		}
-		d.Close()
-		log.Printf("debug logging turned %s (takes effect within a couple of seconds)", val)
-		return
-	}
 
 	db, err := openDB(*dbPath)
 	if err != nil {

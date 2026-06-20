@@ -90,16 +90,13 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	ratio := getUsageRatio(s.db)
 	susp := adminSuspended(s.db, u.Username, u.Role, ratio)
-	var allowed string
-	s.db.QueryRow("SELECT allowed_modes FROM users WHERE username = ?", u.Username).Scan(&allowed)
 	writeJSON(w, 200, map[string]any{
-		"auth":          true,
-		"username":      u.Username,
-		"role":          u.Role,
-		"suspended":     susp.Suspended,
-		"reason":        susp.Reason,
-		"contact":       getAdminContact(s.db),
-		"allowed_modes": allowed,
+		"auth":      true,
+		"username":  u.Username,
+		"role":      u.Role,
+		"suspended": susp.Suspended,
+		"reason":    susp.Reason,
+		"contact":   getAdminContact(s.db),
 	})
 }
 
@@ -303,52 +300,6 @@ func validRole(r string) bool {
 	return false
 }
 
-// sanitizeModes keeps only valid, known modes and joins them with commas.
-// An empty result means "all modes allowed".
-func sanitizeModes(modes []string) string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, m := range modes {
-		m = strings.TrimSpace(m)
-		if m != "" && validMode(m) && !seen[m] {
-			seen[m] = true
-			out = append(out, m)
-		}
-	}
-	return strings.Join(out, ",")
-}
-
-// userAllowedModes returns the set of modes a user may use. An empty set means
-// no restriction (everything allowed).
-func (s *Server) userAllowedModes(username string) map[string]bool {
-	var raw string
-	s.db.QueryRow("SELECT allowed_modes FROM users WHERE username = ?", username).Scan(&raw)
-	set := map[string]bool{}
-	for _, m := range strings.Split(raw, ",") {
-		m = strings.TrimSpace(m)
-		if m != "" {
-			set[m] = true
-		}
-	}
-	return set
-}
-
-// modeAllowedFor checks a mode against a user's restriction. Owners are never
-// restricted; an empty restriction set allows everything.
-func (s *Server) modeAllowedFor(u *User, mode string) bool {
-	if u.Role == "owner" {
-		return true
-	}
-	allowed := s.userAllowedModes(u.Username)
-	if len(allowed) == 0 {
-		return true
-	}
-	if mode == "" {
-		mode = "tcp"
-	}
-	return allowed[mode]
-}
-
 func normalizeRule(in *ruleInput) error {
 	if in.Role == "" {
 		in.Role = "local"
@@ -413,10 +364,6 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	if err := normalizeRule(&in); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
-		return
-	}
-	if !s.modeAllowedFor(u, in.Mode) {
-		writeJSON(w, 403, map[string]any{"error": "your account is not allowed to use the " + in.Mode + " mode"})
 		return
 	}
 	if !validPeriod(in.Period) {
@@ -484,10 +431,6 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	if err := normalizeRule(&in); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
-		return
-	}
-	if !s.modeAllowedFor(u, in.Mode) {
-		writeJSON(w, 403, map[string]any{"error": "your account is not allowed to use the " + in.Mode + " mode"})
 		return
 	}
 	if !validPeriod(in.Period) {
@@ -597,7 +540,7 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 	case http.MethodGet:
 		ratio := getUsageRatio(s.db)
 		nowTs := now()
-		rows, err := s.db.Query(`SELECT u.username, u.role, u.created_at, u.limit_bytes, u.expiry_date, u.allowed_modes,
+		rows, err := s.db.Query(`SELECT u.username, u.role, u.created_at, u.limit_bytes, u.expiry_date,
 			(SELECT COUNT(*) FROM rules WHERE owner = u.username) as rule_count,
 			COALESCE((SELECT SUM(bytes_up + bytes_down) FROM rules WHERE owner = u.username), 0) as used
 			FROM users u WHERE u.role != 'owner' ORDER BY u.created_at DESC`)
@@ -607,21 +550,20 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 		}
 		defer rows.Close()
 		type adminRow struct {
-			Username     string `json:"username"`
-			Role         string `json:"role"`
-			CreatedAt    int64  `json:"created_at"`
-			LimitBytes   int64  `json:"limit_bytes"`
-			ExpiryDate   int64  `json:"expiry_date"`
-			AllowedModes string `json:"allowed_modes"`
-			RuleCount    int    `json:"rule_count"`
-			UsedBytes    int64  `json:"used_bytes"`
-			Status       string `json:"status"`
+			Username   string `json:"username"`
+			Role       string `json:"role"`
+			CreatedAt  int64  `json:"created_at"`
+			LimitBytes int64  `json:"limit_bytes"`
+			ExpiryDate int64  `json:"expiry_date"`
+			RuleCount  int    `json:"rule_count"`
+			UsedBytes  int64  `json:"used_bytes"`
+			Status     string `json:"status"`
 		}
 		out := []adminRow{}
 		for rows.Next() {
 			var a adminRow
 			var rawUsed int64
-			rows.Scan(&a.Username, &a.Role, &a.CreatedAt, &a.LimitBytes, &a.ExpiryDate, &a.AllowedModes, &a.RuleCount, &rawUsed)
+			rows.Scan(&a.Username, &a.Role, &a.CreatedAt, &a.LimitBytes, &a.ExpiryDate, &a.RuleCount, &rawUsed)
 			a.UsedBytes = int64(float64(rawUsed) * ratio)
 			a.Status = "active"
 			if a.ExpiryDate > 0 && nowTs > a.ExpiryDate {
@@ -635,11 +577,10 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 
 	case http.MethodPost:
 		var body struct {
-			Username     string   `json:"username"`
-			Password     string   `json:"password"`
-			LimitGB      float64  `json:"limit_gb"`
-			Expiry       string   `json:"expiry"`
-			AllowedModes []string `json:"allowed_modes"`
+			Username string  `json:"username"`
+			Password string  `json:"password"`
+			LimitGB  float64 `json:"limit_gb"`
+			Expiry   string  `json:"expiry"`
 		}
 		if err := readJSON(r, &body); err != nil || body.Username == "" || len(body.Password) < 6 {
 			writeJSON(w, 400, map[string]any{"error": "username and a password of 6+ characters are required"})
@@ -650,8 +591,8 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 			writeJSON(w, 400, map[string]any{"error": "invalid expiry date"})
 			return
 		}
-		_, err = s.db.Exec("INSERT INTO users (username, password_hash, role, limit_bytes, expiry_date, allowed_modes, created_at) VALUES (?, ?, 'admin', ?, ?, ?, ?)",
-			body.Username, hashPassword(body.Password), int64(body.LimitGB*1073741824), expiry, sanitizeModes(body.AllowedModes), now())
+		_, err = s.db.Exec("INSERT INTO users (username, password_hash, role, limit_bytes, expiry_date, created_at) VALUES (?, ?, 'admin', ?, ?, ?)",
+			body.Username, hashPassword(body.Password), int64(body.LimitGB*1073741824), expiry, now())
 		if err != nil {
 			writeJSON(w, 409, map[string]any{"error": "that username is already taken"})
 			return
@@ -660,11 +601,10 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 
 	case http.MethodPut:
 		var body struct {
-			Username     string   `json:"username"`
-			Password     string   `json:"password"`
-			LimitGB      float64  `json:"limit_gb"`
-			Expiry       string   `json:"expiry"`
-			AllowedModes []string `json:"allowed_modes"`
+			Username string  `json:"username"`
+			Password string  `json:"password"` // optional: blank = unchanged
+			LimitGB  float64 `json:"limit_gb"`
+			Expiry   string  `json:"expiry"`
 		}
 		if err := readJSON(r, &body); err != nil || body.Username == "" {
 			writeJSON(w, 400, map[string]any{"error": "bad request"})
@@ -680,8 +620,8 @@ func (s *Server) handleAdmins(w http.ResponseWriter, r *http.Request, u *User) {
 			writeJSON(w, 400, map[string]any{"error": "invalid expiry date"})
 			return
 		}
-		s.db.Exec("UPDATE users SET limit_bytes = ?, expiry_date = ?, allowed_modes = ? WHERE username = ?",
-			int64(body.LimitGB*1073741824), expiry, sanitizeModes(body.AllowedModes), body.Username)
+		s.db.Exec("UPDATE users SET limit_bytes = ?, expiry_date = ? WHERE username = ?",
+			int64(body.LimitGB*1073741824), expiry, body.Username)
 		if len(body.Password) >= 6 {
 			s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", hashPassword(body.Password), body.Username)
 		}

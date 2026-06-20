@@ -189,9 +189,6 @@
     background:rgba(47,215,200,.12);color:var(--up);margin-left:6px}
   .role-pill{font-size:9.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-faint)}
   code{font-family:var(--mono);font-size:11px;background:var(--bg-soft);padding:1px 5px;border-radius:3px;color:var(--up)}
-  .modechecks{display:flex;flex-wrap:wrap;gap:6px 16px}
-  .modechecks label{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;color:var(--txt);cursor:pointer}
-  .modechecks input{accent-color:var(--accent)}
   .x{width:30px;height:30px;border-radius:8px;color:var(--txt-dim)}
   .x:hover{background:var(--panel-2);color:var(--txt)}
 
@@ -455,17 +452,6 @@
         <div class="field"><label>Traffic limit (GB, 0 = unlimited)</label><input id="a-limit" type="number" step="0.1" placeholder="0"></div>
         <div class="field"><label>Expiry date (optional)</label><input id="a-expiry" type="date"></div>
       </div>
-      <div class="field">
-        <label>Allowed modes <span style="color:var(--txt-faint);text-transform:none;letter-spacing:0">— none ticked = all allowed</span></label>
-        <div id="a-modes" class="modechecks">
-          <label><input type="checkbox" value="tcp"> tcp</label>
-          <label><input type="checkbox" value="aes"> aes</label>
-          <label><input type="checkbox" value="tls"> tls</label>
-          <label><input type="checkbox" value="ws"> ws</label>
-          <label><input type="checkbox" value="icmp"> icmp</label>
-          <label><input type="checkbox" value="sit"> sit</label>
-        </div>
-      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeAdmin()">Cancel</button>
@@ -669,19 +655,12 @@ async function genSecret(){
   if(r.ok&&r.data.secret)$('r-secret').value=r.data.secret;
 }
 
-function applyAllowedModes(){
-  const allowed=(ME&&ME.allowed_modes)?ME.allowed_modes.split(',').filter(Boolean):[];
-  const all=['tcp','aes','tls','ws','icmp','sit'];
-  const show=(ME.role==='owner'||allowed.length===0)?all:allowed;
-  $('r-mode').innerHTML=show.map(m=>`<option value="${m}">${m}</option>`).join('');
-}
 function openRule(){
   $('rule-title').textContent='New tunnel';
   $('r-id').value='';$('r-name').value='';$('r-lport').value='';$('r-tport').value='';
   $('r-tip').value='';$('r-limit').value='0';$('r-period').value='none';$('r-expiry').value='';
   $('r-note').value='';$('r-active').checked=true;
-  applyAllowedModes();
-  $('r-role').value='local';$('r-mode').selectedIndex=0;$('r-secret').value='';$('r-host').value='';
+  $('r-role').value='local';$('r-mode').value='tcp';$('r-secret').value='';$('r-host').value='';
   roleChanged();
   if(ME.role==='owner')populateOwnerSelect('');
   $('rule-modal').classList.remove('hidden');
@@ -694,7 +673,6 @@ function editRule(rl){
   $('r-period').value=rl.period||'none';
   $('r-expiry').value=rl.expiry_date?fmtDate(rl.expiry_date):'';
   $('r-note').value=rl.note;$('r-active').checked=rl.active;
-  applyAllowedModes();
   $('r-role').value=rl.role||'local';$('r-mode').value=rl.mode||'tcp';
   $('r-secret').value=rl.secret||'';$('r-host').value=rl.host||'';
   roleChanged();
@@ -773,17 +751,10 @@ function populateOwnerSelect(sel){
     if(sel)$('r-owner').value=sel;
   });
 }
-function setAdminModes(csv){
-  const set=(csv||'').split(',').filter(Boolean);
-  $('a-modes').querySelectorAll('input').forEach(c=>{c.checked=set.includes(c.value);});
-}
-function getAdminModes(){
-  return Array.from($('a-modes').querySelectorAll('input:checked')).map(c=>c.value);
-}
 function openAdmin(){
   $('admin-title').textContent='New admin';
   $('a-edit').value='';$('a-user').value='';$('a-user').disabled=false;$('a-pass').value='';
-  $('a-limit').value='0';$('a-expiry').value='';setAdminModes('');
+  $('a-limit').value='0';$('a-expiry').value='';
   $('a-pass-lbl').textContent='Password';$('a-pass-hint').textContent='At least 6 characters. This admin manages only their own tunnels.';
   $('a-save').textContent='Create admin';
   $('admin-modal').classList.remove('hidden');
@@ -793,7 +764,6 @@ function editAdmin(a){
   $('a-edit').value=a.username;$('a-user').value=a.username;$('a-user').disabled=true;$('a-pass').value='';
   $('a-limit').value=a.limit_bytes>0?(a.limit_bytes/1073741824):0;
   $('a-expiry').value=a.expiry_date?fmtDate(a.expiry_date):'';
-  setAdminModes(a.allowed_modes);
   $('a-pass-lbl').textContent='New password (optional)';$('a-pass-hint').textContent='Leave blank to keep the current password.';
   $('a-save').textContent='Save changes';
   $('admin-modal').classList.remove('hidden');
@@ -802,7 +772,7 @@ function closeAdmin(){$('admin-modal').classList.add('hidden');}
 async function saveAdmin(){
   const editing=$('a-edit').value;
   const body={username:$('a-user').value.trim(),password:$('a-pass').value,
-    limit_gb:parseFloat($('a-limit').value)||0,expiry:$('a-expiry').value,allowed_modes:getAdminModes()};
+    limit_gb:parseFloat($('a-limit').value)||0,expiry:$('a-expiry').value};
   const r=await api('/api/admins',editing?'PUT':'POST',body);
   if(r.ok&&r.data.success){closeAdmin();loadAdmins();toast(editing?'Admin updated.':'Admin created.','ok');}
   else toast(r.data.error||'Could not save admin.','bad');
