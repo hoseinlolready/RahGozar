@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT NOT NULL DEFAULT 'admin',
     limit_bytes   INTEGER NOT NULL DEFAULT 0,
     expiry_date   INTEGER NOT NULL DEFAULT 0,
+    allowed_modes TEXT NOT NULL DEFAULT '',
     created_at    INTEGER NOT NULL
 );
 
@@ -61,8 +62,9 @@ func migrate(db *sql.DB) {
 		"host":   "TEXT NOT NULL DEFAULT ''",
 	})
 	addCols(db, "users", map[string]string{
-		"limit_bytes": "INTEGER NOT NULL DEFAULT 0",
-		"expiry_date": "INTEGER NOT NULL DEFAULT 0",
+		"limit_bytes":   "INTEGER NOT NULL DEFAULT 0",
+		"expiry_date":   "INTEGER NOT NULL DEFAULT 0",
+		"allowed_modes": "TEXT NOT NULL DEFAULT ''",
 	})
 }
 
