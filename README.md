@@ -66,10 +66,10 @@ Both servers run the same binary and panel. On the exit you add a `server` tunne
 Unpack the release, then from inside the folder run the management script:
 
 ```bash
-sudo bash scripts/rahgozar.sh
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/rahgozar.sh)"
 ```
 
-This opens an interactive menu. Choose **Install** — it detects your CPU architecture, copies the matching binary into `/usr/local/rahgozar`, walks you through creating the **owner** account, starts a `systemd` service, and installs a `rahgozar` command so you can re-open the menu any time by typing:
+This opens an interactive menu. Choose **Install** and it installs a `rahgozar` command so you can re-open the menu any time by typing:
 
 ```bash
 rahgozar
