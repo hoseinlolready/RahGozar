@@ -63,19 +63,25 @@ Both servers run the same binary and panel. On the exit you add a `server` tunne
 
 ## Install
 
-Unpack the release, then from inside the folder run the management script:
+On the server, run:
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main/scripts/rahgozar.sh)"
 ```
 
-This opens an interactive menu. Choose **Install** and it installs a `rahgozar` command so you can re-open the menu any time by typing:
+This opens the interactive menu. Choose **Install** — it downloads the matching core binary from GitHub into `/usr/local/rahgozar`, asks for a panel port, walks you through creating the **owner** account, starts a `systemd` service, and installs a `rahgozar` command so you can re-open the menu any time by typing:
 
 ```bash
 rahgozar
 ```
 
-The menu header shows the panel link, the server's location, and whether the service is running. Open the panel at the link shown (`http://<server-ip>:<port>`).
+The menu header shows the panel link, the server's location, and whether the service is running. Open the panel at the link shown (`http://<server-ip>:<port>`) and add your tunnels there.
+
+If your server can't reach GitHub directly, point the script at a mirror:
+
+```bash
+sudo RAHGOZAR_RAW_BASE="https://your-mirror/RahGozar/main" bash -c "$(curl -sL https://your-mirror/RahGozar/main/scripts/rahgozar.sh)"
+```
 
 ## Managing it
 
@@ -94,6 +100,21 @@ The owner is the first account created and can never be deleted from the CLI. Ow
 ## Uninstall
 
 Run `rahgozar`, choose **Uninstall**, and confirm. You'll be asked whether to keep or remove the database (accounts + tunnels).
+
+## ICMP and SIT (advanced, need root)
+
+`icmp` and `sit` require raw sockets / kernel tunnels, so they only run as root. Both are point-to-point between your two servers.
+
+To check the ICMP transport in isolation (no Xray involved), run the built-in test — server on the exit, client on the entry:
+
+```
+# on the exit (abroad):
+sudo ./rahgozar -icmp-server -secret mysecret
+# on the entry (Iran):
+sudo ./rahgozar -icmp-client <EXIT_IP> -secret mysecret
+```
+
+A `SUCCESS` line means ICMP works end to end. Add `RAHGOZAR_DEBUG=1` in front of either command to see per-packet detail (whether requests arrive, decrypt, and get answered). For `sit`, both ends point their target IP at each other's public IP; the private link is fixed at `10.200.200.1` (exit) and `10.200.200.2` (entry).
 
 ## Building from source
 

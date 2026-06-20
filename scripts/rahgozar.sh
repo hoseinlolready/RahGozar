@@ -9,6 +9,10 @@ SERVICE_FILE="/etc/systemd/system/rahgozar.service"
 SELF_PATH="/usr/local/bin/rahgozar"
 SERVICE="rahgozar"
 
+REPO="hoseinlolready/RahGozar"
+BRANCH="main"
+RAW_BASE="${RAHGOZAR_RAW_BASE:-https://raw.githubusercontent.com/$REPO/refs/heads/$BRANCH}"
+
 C_RESET=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'
 C_BLUE=$'\e[38;5;39m'; C_CYAN=$'\e[38;5;43m'; C_GREEN=$'\e[38;5;42m'
 C_RED=$'\e[38;5;203m'; C_YEL=$'\e[38;5;215m'; C_GREY=$'\e[38;5;245m'
@@ -32,6 +36,46 @@ arch_bin() {
     aarch64|arm64) echo "rahgozar-linux-arm64" ;;
     *) echo "" ;;
   esac
+}
+
+# Put the right binary at $BIN. Prefer a local ./dist copy (when the repo is
+# unpacked next to the script); otherwise download it from GitHub so the
+# curl-pipe-to-bash one-liner works with no local files.
+fetch_binary() {
+  local b; b="$(arch_bin)"
+  if [ -z "$b" ]; then err "Unsupported CPU architecture: $(uname -m)"; return 1; fi
+
+  local sd=""; [ -n "${BASH_SOURCE:-}" ] && [ -f "${BASH_SOURCE:-}" ] && sd="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
+  local local_src=""
+  for cand in "./dist/$b" "./$b" ${sd:+"$sd/dist/$b" "$sd/../dist/$b"}; do
+    [ -f "$cand" ] && { local_src="$cand"; break; }
+  done
+
+  mkdir -p "$INSTALL_DIR"
+  if [ -n "$local_src" ]; then
+    install -m 0755 "$local_src" "$BIN"
+    ok "Installed binary from $local_src"
+  else
+    say "Downloading core for $(uname -m) from GitHub..."
+    if curl -fL --retry 3 --connect-timeout 15 "$RAW_BASE/dist/$b" -o "$BIN.tmp" 2>/dev/null && [ -s "$BIN.tmp" ]; then
+      chmod +x "$BIN.tmp"; mv "$BIN.tmp" "$BIN"
+      ok "Downloaded core from GitHub"
+    else
+      rm -f "$BIN.tmp"
+      err "Could not download the core from $RAW_BASE/dist/$b"
+      err "Check the server's internet access to GitHub, or set RAHGOZAR_RAW_BASE to a mirror."
+      return 1
+    fi
+  fi
+}
+
+# Install this script as the 'rahgozar' command. Copy the local file if we have
+# one, else fetch the script from GitHub (the one-liner case).
+install_self() {
+  if [ -n "${BASH_SOURCE:-}" ] && [ -f "${BASH_SOURCE:-}" ]; then
+    install -m 0755 "${BASH_SOURCE}" "$SELF_PATH" 2>/dev/null && { chmod +x "$SELF_PATH"; return; }
+  fi
+  curl -fsSL "$RAW_BASE/scripts/rahgozar.sh" -o "$SELF_PATH" 2>/dev/null && chmod +x "$SELF_PATH"
 }
 
 pub_ip() {
@@ -116,25 +160,13 @@ EOF
 do_install() {
   need_root
   if is_installed; then
-    warn "RahGozar is already installed. Use Update to replace the binary."
-    return
-  fi
-  local b; b="$(arch_bin)"
-  if [ -z "$b" ]; then err "Unsupported CPU architecture: $(uname -m)"; return; fi
-
-  local src=""
-  for cand in "./dist/$b" "./$b" "$(dirname "$0")/dist/$b" "$(dirname "$0")/../dist/$b"; do
-    [ -f "$cand" ] && { src="$cand"; break; }
-  done
-  if [ -z "$src" ]; then
-    err "Could not find the binary '$b'. Run this script from the unpacked RahGozar folder."
+    warn "RahGozar is already installed. Use Update to replace the core."
     return
   fi
 
   local port; port="$(ask 'Panel port [9090]:')"; port="${port:-9090}"
 
-  mkdir -p "$INSTALL_DIR"
-  install -m 0755 "$src" "$BIN"
+  fetch_binary || return
   echo "$port" > "$PORT_FILE"
 
   say ""
@@ -144,14 +176,13 @@ do_install() {
   write_service "$port"
   systemctl enable --now "$SERVICE" >/dev/null 2>&1
 
-  install -m 0755 "$0" "$SELF_PATH" 2>/dev/null || cp "$0" "$SELF_PATH"
-  chmod +x "$SELF_PATH"
+  install_self
 
   say ""
   if svc_active; then
     ok "Installed and running."
     ok "Panel: ${C_CYAN}http://$(pub_ip):$port${C_RESET}"
-    say "${C_GREY}You can re-open this menu any time by typing:${C_RESET} ${C_B}rahgozar${C_RESET}"
+    say "${C_GREY}Re-open this menu any time by typing:${C_RESET} ${C_B}rahgozar${C_RESET}"
   else
     err "Installed but the service did not start. Check: journalctl -u $SERVICE -n 50"
   fi
@@ -180,17 +211,15 @@ do_uninstall() {
 do_update() {
   need_root
   if ! is_installed; then warn "Not installed yet — use Install."; return; fi
-  local b; b="$(arch_bin)"
-  local src=""
-  for cand in "./dist/$b" "./$b" "$(dirname "$0")/dist/$b" "$(dirname "$0")/../dist/$b"; do
-    [ -f "$cand" ] && { src="$cand"; break; }
-  done
-  if [ -z "$src" ]; then err "New binary '$b' not found next to this script."; return; fi
   systemctl stop "$SERVICE" >/dev/null 2>&1
-  install -m 0755 "$src" "$BIN"
-  install -m 0755 "$0" "$SELF_PATH" 2>/dev/null || true
-  systemctl start "$SERVICE" >/dev/null 2>&1
-  svc_active && ok "Updated and restarted." || err "Updated but service did not start."
+  if fetch_binary; then
+    install_self
+    systemctl start "$SERVICE" >/dev/null 2>&1
+    svc_active && ok "Updated and restarted." || err "Updated but service did not start."
+  else
+    systemctl start "$SERVICE" >/dev/null 2>&1
+    err "Update failed; kept the existing core."
+  fi
 }
 
 do_add_admin()  { need_root; is_installed && "$BIN" -db "$DB" -add-admin || warn "Not installed."; }
