@@ -28,6 +28,12 @@ type Rule struct {
 	Active        bool   `json:"active"`
 	CreatedAt     int64  `json:"created_at"`
 
+	// Multi-IP ICMP (only used when mode == "icmp"). Empty means "default":
+	// kernel-chosen source, accept on any local IP, reply to the request source.
+	ICMPSrcIP    string `json:"icmp_src_ip"`    // local IP to send ICMP from
+	ICMPListenIP string `json:"icmp_listen_ip"` // local IP to receive peer ICMP on
+	ICMPPeerIP   string `json:"icmp_peer_ip"`   // peer IP to send ICMP to
+
 	RateUpBps   float64 `json:"rate_up_bps"`
 	RateDownBps float64 `json:"rate_down_bps"`
 	Status      string  `json:"status"` // computed: active | inactive | expired | limited

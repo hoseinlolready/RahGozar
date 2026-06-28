@@ -16,6 +16,9 @@ import (
 
 const defaultDBPath = "rahgozar.db"
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	log.SetFlags(log.Ltime)
 	log.SetPrefix("[RahGozar] ")
@@ -30,8 +33,14 @@ func main() {
 		icmpCli = flag.String("icmp-client", "", "ICMP ping test: dial this exit IP, send a probe, measure round-trip (needs root)")
 		secret  = flag.String("secret", "", "shared secret for -icmp-server / -icmp-client")
 		setDbg  = flag.String("debug", "", "turn debug logging on/off for the running service (on|off), then exit")
+		showVer = flag.Bool("version", false, "print the build version, then exit")
 	)
 	flag.Parse()
+
+	if *showVer {
+		fmt.Println(version)
+		return
+	}
 
 	switch {
 	case *icmpSrv:

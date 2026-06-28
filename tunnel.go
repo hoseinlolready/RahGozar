@@ -94,7 +94,8 @@ func (m *Manager) sync() error {
 	suspended := suspendedOwners(m.db, ratio)
 
 	rows, err := m.db.Query(`SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port,
-		limit_bytes, bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
+		limit_bytes, bytes_up, bytes_down, period, period_reset_at, expiry_date, note,
+		icmp_src_ip, icmp_listen_ip, icmp_peer_ip, active, created_at
 		FROM rules WHERE active = 1`)
 	if err != nil {
 		return err
@@ -109,7 +110,7 @@ func (m *Manager) sync() error {
 		if err := rows.Scan(&r.ID, &r.Owner, &r.Name, &r.Role, &r.Mode, &r.Secret, &r.Host,
 			&r.ListenPort, &r.TargetIP, &r.TargetPort,
 			&r.LimitBytes, &r.BytesUp, &r.BytesDown, &r.Period, &r.PeriodResetAt, &r.ExpiryDate,
-			&r.Note, &active, &r.CreatedAt); err != nil {
+			&r.Note, &r.ICMPSrcIP, &r.ICMPListenIP, &r.ICMPPeerIP, &active, &r.CreatedAt); err != nil {
 			log.Printf("row scan: %v", err)
 			continue
 		}
@@ -127,7 +128,8 @@ func (m *Manager) sync() error {
 	}
 
 	for id, r := range wanted {
-		hash := fmt.Sprintf("%s|%s|%s|%s|%d:%s:%d", r.Role, r.Mode, r.Secret, r.Host, r.ListenPort, r.TargetIP, r.TargetPort)
+		hash := fmt.Sprintf("%s|%s|%s|%s|%d:%s:%d|%s|%s|%s", r.Role, r.Mode, r.Secret, r.Host, r.ListenPort, r.TargetIP, r.TargetPort,
+			r.ICMPSrcIP, r.ICMPListenIP, r.ICMPPeerIP)
 
 		m.mu.Lock()
 		cur, exists := m.configs[id]
@@ -153,7 +155,8 @@ func (m *Manager) sync() error {
 }
 
 func (m *Manager) start(r Rule, hash string) {
-	opt := TransportOpt{Secret: r.Secret, Host: r.Host}
+	opt := TransportOpt{Secret: r.Secret, Host: r.Host,
+		ICMPSrcIP: r.ICMPSrcIP, ICMPListenIP: r.ICMPListenIP, ICMPPeerIP: r.ICMPPeerIP}
 	listenAddr := fmt.Sprintf(":%d", r.ListenPort)
 	targetAddr := fmt.Sprintf("%s:%d", r.TargetIP, r.TargetPort)
 

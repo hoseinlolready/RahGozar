@@ -4,8 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +36,124 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/admins", s.requireAuth(s.handleAdmins))
 	mux.HandleFunc("/api/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/api/settings", s.requireAuth(s.handleSettings))
+	mux.HandleFunc("/api/update", s.requireAuth(s.handleUpdate))
 	return mux
+}
+
+// handleUpdate lets the owner update the core from the panel: it downloads the
+// matching binary, verifies it, swaps it in over the running file, and asks
+// systemd to restart the service onto the new build.
+func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request, u *User) {
+	if u.Role != "owner" {
+		writeJSON(w, 403, map[string]any{"error": "owner only"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, nil)
+		return
+	}
+	binName := archBinaryName()
+	if binName == "" {
+		writeJSON(w, 400, map[string]any{"error": "unsupported architecture " + runtime.GOARCH})
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		writeJSON(w, 500, map[string]any{"error": "cannot locate the running binary"})
+		return
+	}
+	newVer, err := downloadAndReplace(rawBase()+"/dist/"+binName, exe)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "update failed: " + err.Error()})
+		return
+	}
+	log.Printf("panel: core updated %s -> %s by owner %s; restarting", version, newVer, u.Username)
+	writeJSON(w, 200, map[string]any{
+		"success":     true,
+		"old_version": version,
+		"new_version": newVer,
+		"message":     "Updated " + version + " → " + newVer + ". Restarting — reload the panel in a few seconds.",
+	})
+	// Restart just after the response is flushed so systemd execs the new binary.
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		exec.Command("systemctl", "restart", "rahgozar").Start()
+	}()
+}
+
+func archBinaryName() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "rahgozar-linux-amd64"
+	case "arm64":
+		return "rahgozar-linux-arm64"
+	}
+	return ""
+}
+
+func rawBase() string {
+	if v := strings.TrimSpace(os.Getenv("RAHGOZAR_RAW_BASE")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "https://raw.githubusercontent.com/hoseinlolready/RahGozar/refs/heads/main"
+}
+
+// downloadAndReplace fetches url to dest, sanity-checks it (size, ELF magic, and
+// that it runs `-version`), then atomically renames it over dest. Replacing a
+// running executable is safe on Linux: the live process keeps the old inode.
+func downloadAndReplace(url, dest string) (string, error) {
+	client := http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	tmp := dest + ".new"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return "", err
+	}
+	n, err := io.Copy(f, resp.Body)
+	f.Close()
+	if err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	if n < 1024 {
+		os.Remove(tmp)
+		return "", fmt.Errorf("downloaded file is too small (%d bytes) — wrong URL or a mirror error", n)
+	}
+
+	magic := make([]byte, 4)
+	mf, err := os.Open(tmp)
+	if err == nil {
+		mf.Read(magic)
+		mf.Close()
+	}
+	if !(magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
+		os.Remove(tmp)
+		return "", fmt.Errorf("downloaded file is not a Linux binary")
+	}
+
+	out, err := exec.Command(tmp, "-version").Output()
+	if err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("the new binary did not run: %v", err)
+	}
+	newVer := strings.TrimSpace(string(out))
+	if newVer == "" {
+		newVer = "unknown"
+	}
+
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("could not replace binary: %v", err)
+	}
+	return newVer, nil
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +222,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"reason":        susp.Reason,
 		"contact":       getAdminContact(s.db),
 		"allowed_modes": allowed,
+		"version":       version,
 	})
 }
 
@@ -223,7 +346,8 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 	ratio := getUsageRatio(s.db)
 
 	q := `SELECT id, owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes,
-		bytes_up, bytes_down, period, period_reset_at, expiry_date, note, active, created_at
+		bytes_up, bytes_down, period, period_reset_at, expiry_date, note,
+		icmp_src_ip, icmp_listen_ip, icmp_peer_ip, active, created_at
 		FROM rules`
 
 	if u.Role == "owner" {
@@ -249,7 +373,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, u *User) {
 		if err := rows.Scan(&rl.ID, &rl.Owner, &rl.Name, &rl.Role, &rl.Mode, &rl.Secret, &rl.Host,
 			&rl.ListenPort, &rl.TargetIP, &rl.TargetPort,
 			&rl.LimitBytes, &rl.BytesUp, &rl.BytesDown, &rl.Period, &rl.PeriodResetAt, &rl.ExpiryDate,
-			&rl.Note, &active, &rl.CreatedAt); err != nil {
+			&rl.Note, &rl.ICMPSrcIP, &rl.ICMPListenIP, &rl.ICMPPeerIP, &active, &rl.CreatedAt); err != nil {
 			continue
 		}
 		rl.Active = active == 1
@@ -293,6 +417,10 @@ type ruleInput struct {
 	Expiry     string `json:"expiry"` // YYYY-MM-DD
 	Note       string `json:"note"`
 	Active     bool   `json:"active"`
+
+	ICMPSrcIP    string `json:"icmp_src_ip"`    // icmp mode: local source IP
+	ICMPListenIP string `json:"icmp_listen_ip"` // icmp mode: local IP to receive on
+	ICMPPeerIP   string `json:"icmp_peer_ip"`   // icmp mode: peer IP to send to
 }
 
 func validRole(r string) bool {
@@ -379,6 +507,21 @@ func normalizeRule(in *ruleInput) error {
 			return fmt.Errorf("sit mode requires a client or server role")
 		}
 	}
+	if in.Mode == "icmp" {
+		in.ICMPSrcIP = strings.TrimSpace(in.ICMPSrcIP)
+		in.ICMPListenIP = strings.TrimSpace(in.ICMPListenIP)
+		in.ICMPPeerIP = strings.TrimSpace(in.ICMPPeerIP)
+		for _, v := range []string{in.ICMPSrcIP, in.ICMPListenIP, in.ICMPPeerIP} {
+			if v != "" {
+				if ip := net.ParseIP(v); ip == nil || ip.To4() == nil {
+					return fmt.Errorf("invalid ICMP IP %q (must be an IPv4 address)", v)
+				}
+			}
+		}
+	} else {
+		// Multi-IP fields only apply to icmp mode.
+		in.ICMPSrcIP, in.ICMPListenIP, in.ICMPPeerIP = "", "", ""
+	}
 	return nil
 }
 
@@ -451,9 +594,11 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request, u *User) {
 	limitBytes := int64(in.LimitGB * 1073741824)
 
 	_, err = s.db.Exec(`INSERT INTO rules
-		(owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes, period, period_reset_at, expiry_date, note, active, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		owner, in.Name, in.Role, in.Mode, in.Secret, in.Host, in.ListenPort, in.TargetIP, in.TargetPort, limitBytes, period, periodResetAt, expiry, in.Note, boolToInt(in.Active), now())
+		(owner, name, role, mode, secret, host, listen_port, target_ip, target_port, limit_bytes, period, period_reset_at, expiry_date, note,
+		 icmp_src_ip, icmp_listen_ip, icmp_peer_ip, active, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		owner, in.Name, in.Role, in.Mode, in.Secret, in.Host, in.ListenPort, in.TargetIP, in.TargetPort, limitBytes, period, periodResetAt, expiry, in.Note,
+		in.ICMPSrcIP, in.ICMPListenIP, in.ICMPPeerIP, boolToInt(in.Active), now())
 
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -522,7 +667,8 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	s.db.QueryRow("SELECT period FROM rules WHERE id = ?", in.ID).Scan(&curPeriod)
 	periodResetAtClause := ""
 	args := []any{owner, in.Name, in.Role, in.Mode, in.Secret, in.Host, in.ListenPort, in.TargetIP, in.TargetPort,
-		int64(in.LimitGB * 1073741824), period, expiry, in.Note, boolToInt(in.Active)}
+		int64(in.LimitGB * 1073741824), period, expiry, in.Note,
+		in.ICMPSrcIP, in.ICMPListenIP, in.ICMPPeerIP, boolToInt(in.Active)}
 
 	if period != curPeriod {
 		periodResetAtClause = ", period_reset_at = ?"
@@ -535,7 +681,8 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, u *User) {
 	args = append(args, in.ID)
 
 	query := fmt.Sprintf(`UPDATE rules SET owner=?, name=?, role=?, mode=?, secret=?, host=?, listen_port=?, target_ip=?, target_port=?,
-		limit_bytes=?, period=?, expiry_date=?, note=?, active=?%s WHERE id=?`, periodResetAtClause)
+		limit_bytes=?, period=?, expiry_date=?, note=?,
+		icmp_src_ip=?, icmp_listen_ip=?, icmp_peer_ip=?, active=?%s WHERE id=?`, periodResetAtClause)
 
 	if _, err := s.db.Exec(query, args...); err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})

@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS rules (
     expiry_date     INTEGER NOT NULL DEFAULT 0,
     note            TEXT NOT NULL DEFAULT '',
     active          INTEGER NOT NULL DEFAULT 1,
+    icmp_src_ip     TEXT NOT NULL DEFAULT '',
+    icmp_listen_ip  TEXT NOT NULL DEFAULT '',
+    icmp_peer_ip    TEXT NOT NULL DEFAULT '',
     created_at      INTEGER NOT NULL
 );
 
@@ -56,10 +59,13 @@ CREATE INDEX IF NOT EXISTS idx_rules_owner ON rules(owner);
 
 func migrate(db *sql.DB) {
 	addCols(db, "rules", map[string]string{
-		"role":   "TEXT NOT NULL DEFAULT 'local'",
-		"mode":   "TEXT NOT NULL DEFAULT 'tcp'",
-		"secret": "TEXT NOT NULL DEFAULT ''",
-		"host":   "TEXT NOT NULL DEFAULT ''",
+		"role":           "TEXT NOT NULL DEFAULT 'local'",
+		"mode":           "TEXT NOT NULL DEFAULT 'tcp'",
+		"secret":         "TEXT NOT NULL DEFAULT ''",
+		"host":           "TEXT NOT NULL DEFAULT ''",
+		"icmp_src_ip":    "TEXT NOT NULL DEFAULT ''",
+		"icmp_listen_ip": "TEXT NOT NULL DEFAULT ''",
+		"icmp_peer_ip":   "TEXT NOT NULL DEFAULT ''",
 	})
 	addCols(db, "users", map[string]string{
 		"limit_bytes":   "INTEGER NOT NULL DEFAULT 0",

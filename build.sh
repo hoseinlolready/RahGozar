@@ -4,8 +4,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p dist
 
-LDFLAGS='-s -w -extldflags "-static"'
+# A unique version per build so `rahgozar update` can show before -> after.
+VERSION="${RAHGOZAR_VERSION:-$(date -u +%Y.%m.%d-%H%M%S)}"
+LDFLAGS="-s -w -X main.version=$VERSION -extldflags \"-static\""
 TAGS='sqlite_omit_load_extension netgo'
+
+echo "Version: $VERSION"
 
 echo "Building linux/amd64..."
 CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \

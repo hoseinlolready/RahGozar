@@ -35,6 +35,12 @@ type Transport interface {
 type TransportOpt struct {
 	Secret string // pre-shared key; authenticates the link and derives AES keys
 	Host   string // SNI / Host header for tls and ws modes (cosmetic camouflage)
+
+	// Multi-IP ICMP routing (icmp mode only). Empty values fall back to
+	// kernel-chosen source / accept-on-any / reply-to-sender behavior.
+	ICMPSrcIP    string // local source IP stamped on outgoing ICMP
+	ICMPListenIP string // only accept ICMP whose IP destination is this local IP
+	ICMPPeerIP   string // destination IP for outgoing ICMP (overrides dial target)
 }
 
 func getTransport(mode string) (Transport, error) {

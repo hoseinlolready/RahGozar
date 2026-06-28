@@ -57,7 +57,7 @@ fetch_binary() {
     ok "Installed binary from $local_src"
   else
     say "Downloading core for $(uname -m) from GitHub..."
-    if curl -fL --retry 3 --connect-timeout 15 "$RAW_BASE/dist/$b" -o "$BIN.tmp" 2>/dev/null && [ -s "$BIN.tmp" ]; then
+    if curl -fL --retry 3 --connect-timeout 15 --progress-bar "$RAW_BASE/dist/$b" -o "$BIN.tmp" && [ -s "$BIN.tmp" ]; then
       chmod +x "$BIN.tmp"; mv "$BIN.tmp" "$BIN"
       ok "Downloaded core from GitHub"
     else
@@ -107,6 +107,8 @@ svc_enabled() { systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; }
 is_installed(){ [ -x "$BIN" ] && [ -f "$SERVICE_FILE" ]; }
 
 get_port() { [ -f "$PORT_FILE" ] && cat "$PORT_FILE" || echo "9090"; }
+
+bin_version() { [ -x "$BIN" ] && "$BIN" -version 2>/dev/null || echo "unknown"; }
 
 header() {
   clear 2>/dev/null || true
@@ -211,14 +213,26 @@ do_uninstall() {
 do_update() {
   need_root
   if ! is_installed; then warn "Not installed yet — use Install."; return; fi
+  local before; before="$(bin_version)"
+  say "Current version: ${C_B}${before}${C_RESET}"
+  say "Stopping service..."
   systemctl stop "$SERVICE" >/dev/null 2>&1
   if fetch_binary; then
     install_self
+    local after; after="$(bin_version)"
+    say "Starting service..."
     systemctl start "$SERVICE" >/dev/null 2>&1
-    svc_active && ok "Updated and restarted." || err "Updated but service did not start."
+    sleep 1
+    if svc_active; then
+      ok "Updated: ${C_B}${before}${C_RESET} → ${C_B}${after}${C_RESET}"
+      ok "Panel: ${C_CYAN}http://$(pub_ip):$(get_port)${C_RESET}"
+    else
+      err "Updated to ${after} but the service did not start. Check: journalctl -u $SERVICE -n 50"
+    fi
   else
+    say "Restoring previous core..."
     systemctl start "$SERVICE" >/dev/null 2>&1
-    err "Update failed; kept the existing core."
+    err "Update failed; kept the existing core (${before})."
   fi
 }
 
@@ -231,7 +245,21 @@ do_del_admin()  {
 }
 do_list_admins(){ need_root; is_installed && "$BIN" -db "$DB" -list-admins || warn "Not installed."; }
 
-do_restart() { need_root; systemctl restart "$SERVICE" && ok "Restarted." || err "Restart failed."; }
+do_restart() {
+  need_root
+  say "Restarting ${SERVICE}..."
+  if systemctl restart "$SERVICE"; then
+    sleep 1
+    if svc_active; then
+      ok "Restarted — running ${C_B}$(bin_version)${C_RESET}"
+      ok "Panel: ${C_CYAN}http://$(pub_ip):$(get_port)${C_RESET}"
+    else
+      err "Restarted but the service is not active. Check: journalctl -u $SERVICE -n 50"
+    fi
+  else
+    err "Restart failed."
+  fi
+}
 do_start()   { need_root; systemctl start "$SERVICE" && ok "Started." || err "Start failed."; }
 do_stop()    { need_root; systemctl stop "$SERVICE" && ok "Stopped." || err "Stop failed."; }
 
@@ -292,7 +320,10 @@ EOF
 }
 
 # Allow direct subcommands too: rahgozar install|status|restart|logs|...
-case "${1:-}" in
+# Works locally (`rahgozar update`) and over the one-liner without the menu:
+#   curl -sL <url>/scripts/rahgozar.sh | sudo bash -s -- update
+#   sudo RAHGOZAR_CMD=update bash -c "$(curl -sL <url>/scripts/rahgozar.sh)"
+case "${1:-${RAHGOZAR_CMD:-}}" in
   install)   do_install ;;
   uninstall) do_uninstall ;;
   update)    do_update ;;
