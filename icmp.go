@@ -7,8 +7,12 @@ import (
 	"errors"
 	"io"
 	"log"
+	mrand "math/rand"
 	"net"
+	"os"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -16,10 +20,11 @@ import (
 const (
 	icmpMaxData     = 1024            // bytes of stream data per packet
 	icmpWindow      = 256             // max in-flight segments per direction
-	icmpRTOBase     = 280 * time.Millisecond
-	icmpRTOMax      = 4 * time.Second
-	icmpTick        = 40 * time.Millisecond
-	icmpMaxRetries  = 14
+	icmpRTOBase     = 500 * time.Millisecond
+	icmpRTOStep     = 150 * time.Millisecond
+	icmpRTOMax      = 1500 * time.Millisecond
+	icmpTick        = 50 * time.Millisecond
+	icmpMaxRetries  = 30
 	icmpKeepalive   = 1200 * time.Millisecond // also keeps NAT mapping open
 	icmpMinPlain    = 24                       // pad small frames up to this
 	icmpInnerHeader = 16
@@ -171,6 +176,24 @@ func newRawICMPConn() (*rawICMPConn, error) {
 	return &rawICMPConn{fd: fd, id: id}, nil
 }
 
+var icmpLossProb, icmpExtraDelay = parseICMPChaos()
+
+func parseICMPChaos() (float64, time.Duration) {
+	p := 0.0
+	if v := os.Getenv("RAHGOZAR_ICMP_LOSS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			p = f
+		}
+	}
+	var d time.Duration
+	if v := os.Getenv("RAHGOZAR_ICMP_DELAY"); v != "" {
+		if pd, err := time.ParseDuration(v); err == nil {
+			d = pd
+		}
+	}
+	return p, d
+}
+
 func (c *rawICMPConn) WriteTo(payload []byte, dst [4]byte, asReply bool, replyID uint16) error {
 	c.seqMu.Lock()
 	c.seq++
@@ -181,6 +204,16 @@ func (c *rawICMPConn) WriteTo(payload []byte, dst [4]byte, asReply bool, replyID
 		id = replyID // match the entry's request id so NAT lets the reply back
 	}
 	pkt := buildEcho(asReply, id, seq, payload)
+	if icmpLossProb > 0 && mrand.Float64() < icmpLossProb {
+		return nil
+	}
+	if icmpExtraDelay > 0 {
+		go func() {
+			time.Sleep(icmpExtraDelay)
+			syscall.Sendto(c.fd, pkt, 0, &syscall.SockaddrInet4{Addr: dst})
+		}()
+		return nil
+	}
 	return syscall.Sendto(c.fd, pkt, 0, &syscall.SockaddrInet4{Addr: dst})
 }
 
@@ -322,7 +355,7 @@ func (ep *icmpEndpoint) route(fr frame, src [4]byte, icmpID uint16) {
 			return
 		}
 		s = newReliableConn(ep, fr.session, src)
-		s.peerID = icmpID // reply with the id the entry used
+		s.peerID.Store(uint32(icmpID)) // reply with the id the entry used
 		ep.sessions[fr.session] = s
 		ep.mu.Unlock()
 		dbg("icmp: new inbound session %d from %s (reply id=%d)", fr.session, net.IP(src[:]).String(), icmpID)
@@ -335,7 +368,7 @@ func (ep *icmpEndpoint) route(fr frame, src [4]byte, icmpID uint16) {
 			return
 		}
 	} else {
-		s.peerID = icmpID
+		s.peerID.Store(uint32(icmpID))
 		ep.mu.Unlock()
 	}
 	s.onFrame(fr)
@@ -369,10 +402,10 @@ type segment struct {
 }
 
 type reliableConn struct {
-	ep   *icmpEndpoint
-	id   uint32
-	peer [4]byte
-	peerID uint16
+	ep     *icmpEndpoint
+	id     uint32
+	peer   [4]byte
+	peerID atomic.Uint32
 
 	sndMu     sync.Mutex
 	sndCond   *sync.Cond
@@ -388,10 +421,10 @@ type reliableConn struct {
 	eof      bool
 	rcvReset bool
 
-	done     chan struct{}
-	doneOnce sync.Once
-	lastTx   time.Time
-	lastRx   time.Time
+	done       chan struct{}
+	doneOnce   sync.Once
+	lastTxNano atomic.Int64
+	lastRxNano atomic.Int64
 }
 
 func newReliableConn(ep *icmpEndpoint, id uint32, peer [4]byte) *reliableConn {
@@ -402,9 +435,9 @@ func newReliableConn(ep *icmpEndpoint, id uint32, peer [4]byte) *reliableConn {
 		unacked: make(map[uint32]*segment),
 		reorder: make(map[uint32]frame),
 		done:    make(chan struct{}),
-		lastTx:  time.Now(),
-		lastRx:  time.Now(),
 	}
+	s.lastTxNano.Store(time.Now().UnixNano())
+	s.lastRxNano.Store(time.Now().UnixNano())
 	s.sndCond = sync.NewCond(&s.sndMu)
 	s.rcvCond = sync.NewCond(&s.rcvMu)
 	go s.timerLoop()
@@ -425,9 +458,9 @@ func (s *reliableConn) sendFrame(ftype byte, seq, ack uint32, data []byte) {
 	pc := s.ep.hub.pc
 	s.ep.hub.mu.Unlock()
 	if pc != nil {
-		pc.WriteTo(blob, s.peer, !s.ep.isClient, s.peerID)
+		pc.WriteTo(blob, s.peer, !s.ep.isClient, uint16(s.peerID.Load()))
 	}
-	s.lastTx = time.Now()
+	s.lastTxNano.Store(time.Now().UnixNano())
 }
 
 func (s *reliableConn) sendControlSeq(ftype byte, data []byte) {
@@ -451,7 +484,7 @@ func (s *reliableConn) sendAck() {
 }
 
 func (s *reliableConn) onFrame(fr frame) {
-	s.lastRx = time.Now()
+	s.lastRxNano.Store(time.Now().UnixNano())
 	switch fr.ftype {
 	case ftACK:
 		s.handleAck(fr.ack)
@@ -609,7 +642,7 @@ func (s *reliableConn) timerLoop() {
 		var resend []*segment
 		dead := false
 		for _, seg := range s.unacked {
-			rto := icmpRTOBase << uint(seg.retries)
+			rto := icmpRTOBase + time.Duration(seg.retries)*icmpRTOStep
 			if rto > icmpRTOMax {
 				rto = icmpRTOMax
 			}
@@ -634,11 +667,11 @@ func (s *reliableConn) timerLoop() {
 			s.sendFrame(seg.ftype, seg.seq, ack, seg.data)
 		}
 
-		if s.ep.isClient && now.Sub(s.lastTx) >= icmpKeepalive {
+		if s.ep.isClient && time.Duration(now.UnixNano()-s.lastTxNano.Load()) >= icmpKeepalive {
 			s.sendFrame(ftPING, 0, ack, nil)
 		}
 
-		if now.Sub(s.lastRx) >= idleTimeout {
+		if time.Duration(now.UnixNano()-s.lastRxNano.Load()) >= idleTimeout {
 			s.shutdown()
 			return
 		}

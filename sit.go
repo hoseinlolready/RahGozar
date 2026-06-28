@@ -59,6 +59,7 @@ func ensureSIT(linkPort int, remotePublic string, isServer bool) (peerPrivate st
 	if _, e := exec.LookPath("ip"); e != nil {
 		return "", fmt.Errorf("the 'ip' command (iproute2) is required for sit mode")
 	}
+	exec.Command("modprobe", "sit").Run()
 
 	exec.Command("ip", "link", "del", dev).Run()
 
@@ -85,6 +86,12 @@ func ensureSIT(linkPort int, remotePublic string, isServer bool) (peerPrivate st
 	exec.Command("iptables", "-t", "mangle", "-A", "OUTPUT", "-o", dev,
 		"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
 		"-j", "TCPMSS", "--set-mss", "1280").Run()
+
+	if debugOn() {
+		if out, e := exec.Command("ip", "-d", "addr", "show", "dev", dev).CombinedOutput(); e == nil {
+			dbg("sit: %s configured:\n%s", dev, strings.TrimSpace(string(out)))
+		}
+	}
 
 	sitUp[dev] = true
 	log.Printf("sit tunnel %s up: local %s <-> peer %s (remote public %s). forward target will be %s", dev, localIP, peerIP, remotePublic, peerIP)
