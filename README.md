@@ -27,24 +27,29 @@ RahGozar forwards traffic between servers and manages those tunnels from a built
 - **Usage ratio**: an owner-set multiplier applied to all measured traffic (e.g. 1.5 counts every 1 GB as 1.5 GB) for both limits and the panel.
 - **Light and dark themes** (dark is the default).
 - System stats (memory, CPU load, uptime) on the dashboard.
-- Builds for `linux/amd64` and `linux/arm64`.
+- Builds for `linux/amd64`.
 
 ## Tunnel modes
 
-Each tunnel runs in one of four modes. Modes only apply to `client`/`server` roles (see below); a plain local forward ignores the mode.
+Each tunnel runs in one mode. Modes only apply to `client`/`server` roles (see below); a plain local forward ignores the mode.
 
 | Mode | On the wire | Use it when |
 |------|-------------|-------------|
 | `tcp` | plain bytes | testing, or a clean path with no inspection |
 | `aes` | AES-256-GCM, padded, no fixed header — looks like random data | signature/keyword DPI; nothing to fingerprint |
 | `tls` | a real TLS 1.3 session — indistinguishable from HTTPS | **the default recommendation for Iran** |
-| `ws` | HTTP/WebSocket frames, optionally over TLS | when you want to ride a CDN (e.g. ArvanCloud) on 80/443 |
-| `icmp` | reliable, multiplexed, encrypted stream carried inside ICMP echo (ping) | when TCP/UDP are throttled but ping still works; needs root |
-| `sit` | kernel IPv6-in-IPv4 (IP protocol 41) | a fast point-to-point link that sidesteps TCP/UDP inspection; needs root |
+| `ws` | HTTP/WebSocket frames, optionally over TLS | ride a CDN (e.g. ArvanCloud) on 80/443 |
+| `https` | fake-TLS: a TLS-looking handshake, then AES-256-GCM inside TLS application-data records | look like HTTPS with no real certificate/handshake |
+| `fake` | a real-looking HTTP/1.1 request/response, then AES-256-GCM frames | fool a protocol classifier into seeing plain web traffic |
+| `udp` | AES-256-GCM per datagram | tunnel UDP services (WireGuard, QUIC, game/voice); optional **source-IP spoofing** |
+| `kcp` | KCP reliable ARQ over UDP, AES-256 per packet | low latency on lossy / throttled links |
+| `kcptcp` | the same KCP, carried over a TCP connection | when you want KCP to blend in as a TCP flow |
+| `icmp` | reliable, multiplexed, encrypted stream inside ICMP echo (ping); supports **multi-IP** and **random-source cover** | when TCP/UDP are throttled but ping still works; needs root |
+| `sit` / `isatap` | kernel IPv6-in-IPv4 (IP protocol 41) | fast point-to-point link; needs root. **Note:** many networks (incl. Iran) drop protocol 41, so these often can't cross |
 
-For `aes`, `tls`, `ws`, and `icmp` you set a **shared secret** that must match on both the entry and the exit; it authenticates the link and derives the encryption key. `tls`/`ws` also take an optional **SNI/Host** for camouflage. For `ws`, prefix the host with `tls:` (e.g. `tls:example.com`) to run it as WebSocket-over-TLS (wss).
+For every encrypted mode (`aes`, `tls`, `ws`, `https`, `fake`, `udp`, `kcp`, `kcptcp`, `icmp`) you set a **shared secret** that must match on both the entry and the exit; it authenticates the link and derives the encryption key. `tls`, `ws`, `https`, and `fake` also take an optional **SNI/Host** for camouflage. For `ws`, prefix the host with `tls:` (e.g. `tls:example.com`) to run it as WebSocket-over-TLS (wss).
 
-`icmp` and `sit` both require root / CAP_NET_RAW (raw sockets) or CAP_NET_ADMIN (kernel tunnel). For `icmp`, set `sysctl -w net.ipv4.icmp_echo_ignore_all=1` on the exit so the kernel's own ping replies don't add noise (one ICMP exit per server). For `sit`, point each node's target IP at the other's public IP, and keep the entry's and exit's link ports equal.
+`icmp`, `sit`, and `isatap` require root / CAP_NET_RAW (raw sockets) or CAP_NET_ADMIN (kernel tunnel). For `icmp`, set `sysctl -w net.ipv4.icmp_echo_ignore_all=1` on the exit so the kernel's own ping replies don't add noise (one ICMP exit per server). For `sit`/`isatap`, point each node's target IP at the other's public IP, and keep the entry's and exit's link ports equal.
 
 ## Roles — how a two-server setup works
 
@@ -75,14 +80,6 @@ This opens the interactive menu. Choose **Install** — it downloads the matchin
 rahgozar
 ```
 
-The menu header shows the panel link, the server's location, and whether the service is running. Open the panel at the link shown (`http://<server-ip>:<port>`) and add your tunnels there.
-
-If your server can't reach GitHub directly, point the script at a mirror:
-
-```bash
-sudo RAHGOZAR_RAW_BASE="https://your-mirror/RahGozar/main" bash -c "$(curl -sL https://your-mirror/RahGozar/main/scripts/rahgozar.sh)"
-```
-
 ## Managing it
 
 Typing `rahgozar` opens the menu, with options for Install, Uninstall, Update, Add admin, Delete admin, List admins, Restart, Start/Stop, Status, and Logs. The same actions are available as direct subcommands:
@@ -110,67 +107,6 @@ The owner can also update the core straight from the panel: **Settings → Core 
 ## Uninstall
 
 Run `rahgozar`, choose **Uninstall**, and confirm. You'll be asked whether to keep or remove the database (accounts + tunnels).
-
-## ICMP and SIT (advanced, need root)
-
-`icmp` and `sit` require raw sockets / kernel tunnels, so they only run as root. Both are point-to-point between your two servers.
-
-To check the ICMP transport in isolation (no Xray involved), run the built-in test — server on the exit, client on the entry:
-
-```
-# on the exit (abroad):
-sudo ./rahgozar -icmp-server -secret mysecret
-# on the entry (Iran):
-sudo ./rahgozar -icmp-client <EXIT_IP> -secret mysecret
-```
-
-A `SUCCESS` line means ICMP works end to end. Add `RAHGOZAR_DEBUG=1` in front of either command to see per-packet detail (whether requests arrive, decrypt, and get answered). For `sit`, both ends point their target IP at each other's public IP; the private link is fixed at `10.200.200.1` (exit) and `10.200.200.2` (entry).
-
-### Multi-IP ICMP (split request/reply routing)
-
-If each server has more than one IP, you can send the ICMP **requests** and **replies** over different IP pairs so the firewall never sees a request and its matching reply between the same two addresses. There is no bidirectional flow to correlate — just two unrelated one-way streams of pings.
-
-Each `icmp` tunnel has three optional fields (set them in the panel; leave blank for the default single-IP behavior):
-
-| Field | Entry (client) | Exit (server) |
-|-------|----------------|---------------|
-| **Source IP** (`icmp_src_ip`) | source IP it sends requests **from** | source IP it sends replies **from** |
-| **Receive IP** (`icmp_listen_ip`) | local IP replies arrive **on** | local IP requests arrive **on** |
-| **Peer IP** (`icmp_peer_ip`) | exit IP it sends requests **to** | entry IP it sends replies **to** |
-
-Example — entry has `10.10.10.10` / `10.10.10.11`, exit has `11.11.11.10` / `11.11.11.11`:
-
-```
-entry  src=10.10.10.10  receive=10.10.10.11  peer=11.11.11.10
-exit   src=11.11.11.11  receive=11.11.11.10  peer=10.10.10.11
-```
-
-On the wire the firewall sees only `10.10.10.10 → 11.11.11.10` (requests) and `11.11.11.11 → 10.10.10.11` (replies) — no shared address pair. The source IP is stamped with `IP_HDRINCL` raw sockets, so each IP must actually be assigned to that server.
-
-Because requests and replies use different addresses, the path is asymmetric. If packets don't arrive, relax reverse-path filtering on both nodes:
-
-```bash
-sysctl -w net.ipv4.conf.all.rp_filter=0
-sysctl -w net.ipv4.conf.default.rp_filter=0
-```
-
-Keep `sysctl -w net.ipv4.icmp_echo_ignore_all=1` on the exit so only RahGozar's crafted replies go out.
-
-## Building from source
-
-Requires Go 1.21+, `gcc`, and (for the arm64 cross-build) `gcc-aarch64-linux-gnu`.
-
-```bash
-./build.sh        # produces dist/rahgozar-linux-amd64 and dist/rahgozar-linux-arm64
-```
-
-To run locally during development:
-
-```bash
-go run . -db ./rahgozar.db -port 9090
-```
-
-On first start with an empty database it prompts for the owner account.
 
 ## License
 
